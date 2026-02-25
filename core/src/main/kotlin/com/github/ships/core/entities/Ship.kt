@@ -24,8 +24,8 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     lateinit var body: Body
     protected var pixmap: Pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, 1)
-    protected var texture: Texture = Texture(pixmap)
-    val trail = MotionTrail(shipColor)
+    protected var texture: Texture = Texture(64, 64, Pixmap.Format.RGBA8888)
+    var trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
 
     var scale: Float = 1.0f
     var baseMaxSpeed: Float = 6f
@@ -36,15 +36,15 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     var chargeTime = 0f
     var isCharging = false
     val shieldRechargeRate = 2f
+    val shieldDrainRate: Float get() = maxShield / 5.0f
 
-    val shieldDrainRate: Float
-        get() = maxShield / 5.0f
+    protected val activeBeams = mutableListOf<BeamData>()
+    protected var candleFlickerTimer = 0f
+    protected var currentFlickerColor = Color.RED
+    private var refreshDamageVisuals = false
+    private val damagedPixels = BooleanArray(64 * 64)
 
-    private val activeBeams = mutableListOf<BeamData>()
-    private var candleFlickerTimer = 0f
-    private var currentFlickerColor = Color.RED
-
-    private class BeamData(val start: Vector2, val end: Vector2, val color: Color, var life: Float, var maxLife: Float, val baseWidth: Float)
+    protected class BeamData(val start: Vector2, val end: Vector2, val color: Color, var life: Float, var maxLife: Float, val baseWidth: Float)
 
     open val maxSpeed: Float
         get() = baseMaxSpeed * scale
@@ -54,9 +54,13 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     abstract fun createBody()
 
+    init {
+        texture.draw(pixmap, 0, 0)
+    }
+
     open fun update(dt: Float) {
         maxPorts = 1 + (level - 1) / 5
-        val baseCooldown = if (this is PlayerShip) 0.4f else 1.0f
+        val baseCooldown = if (this is PlayerShip) 0.4f else 0.5f
 
         while (weaponPorts.size < maxPorts) {
             weaponPorts.add(ProjectileWeapon(Rarity.COMMON, baseCooldown))
@@ -107,18 +111,16 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 1 -> Color.YELLOW
                 else -> Color.WHITE
             }
-            refreshDamageVisuals = true
+            if (damagedPixels.any { it }) refreshDamageVisuals = true
         }
-    }
 
-    private var refreshDamageVisuals = false
-
-    open fun render(batch: SpriteBatch) {
         if (refreshDamageVisuals) {
             updateDamageTextureColors()
             refreshDamageVisuals = false
         }
+    }
 
+    open fun render(batch: SpriteBatch) {
         val pos = body.position
         val angleDeg = body.angle * MathUtils.radiansToDegrees - 90f
 
@@ -137,16 +139,14 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     }
 
     private fun updateDamageTextureColors() {
-        var changed = false
         val flickerColorInt = Color.rgba8888(currentFlickerColor)
-
-        for (y in 0 until pixmap.height) {
-            for (x in 0 until pixmap.width) {
-                val pixel = pixmap.getPixel(x, y)
-                if (isDamagePixel(pixel)) {
-                    pixmap.drawPixel(x, y, flickerColorInt)
-                    changed = true
-                }
+        var changed = false
+        for (i in 0 until damagedPixels.size) {
+            if (damagedPixels[i]) {
+                val dx = i % 64
+                val dy = i / 64
+                pixmap.drawPixel(dx, dy, flickerColorInt)
+                changed = true
             }
         }
         if (changed) texture.draw(pixmap, 0, 0)
@@ -189,13 +189,18 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             val podsPerSide = (if (hasNosePort) maxPorts - 1 else maxPorts) / 2
             val sideSign = if (actualIndex % 2 == 0) 1f else -1f
             val sideIndex = actualIndex / 2
+
             val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
+
             val t = if (podsPerSide > 1) sideIndex.toFloat() / (podsPerSide - 1).toFloat() else 0.5f
             val yFactor = (t - 0.5f) * 0.8f
+
             localForward = shipH * yFactor
+
             val triangleWidthFactor = (0.5f - yFactor)
             localSide = (shipW / 2f) * sideSign * MathUtils.lerp(triangleWidthFactor, 1f, progress)
         }
+
         val worldOffset = Vector2(localForward, -localSide).rotateRad(bodyAngleRad)
         return body.position.cpy().add(worldOffset)
     }
@@ -206,21 +211,14 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         val chargeRatio = MathUtils.clamp(chargeTime / 5.0f, 0f, 1f)
         for (i in 0 until weaponPorts.size) {
             val podPos = getPodWorldPosition(i, shipW, shipH, body.angle)
-
-            // Fixed: Ports now grow by 2x at max charge
             val podScale = 1.0f + chargeRatio * 1.0f
             val podW = 0.25f * scale * podScale
             val podH = 0.4f * scale * podScale
-
-            // Fixed: Added mechanical "rattle" jitter that increases with charge
-            val rattleAmount = 0.05f * scale * chargeRatio
-            val rx = MathUtils.random(-rattleAmount, rattleAmount)
-            val ry = MathUtils.random(-rattleAmount, rattleAmount)
-
+            val rx = MathUtils.random(-0.05f, 0.05f) * scale * chargeRatio
+            val ry = MathUtils.random(-0.05f, 0.05f) * scale * chargeRatio
             val levelHue = (level * 10f) % 360f
             val targetColor = Color().fromHsv(levelHue, 0.8f, 1f)
             val basePodColor = Color.GRAY.cpy().lerp(targetColor, chargeRatio)
-
             batch.setColor(basePodColor)
             batch.draw(white, podPos.x - podW/2 + rx, podPos.y - podH/2 + ry, podW/2, podH/2, podW, podH, 1f, 1f, angleDeg)
             batch.setColor(if (chargeRatio > 0.1f) Color.WHITE else Color.LIGHT_GRAY)
@@ -235,7 +233,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     fun fireWeapons(defaultTargetDir: Vector2, onProjectileCreated: (Projectile) -> Unit, potentialTargets: List<Ship>) {
         if (weaponPorts.isEmpty()) return
-        val baseCooldown = if (this is PlayerShip) 0.4f else 1.0f
+        val baseCooldown = if (this is PlayerShip) 0.4f else 0.5f
         val shotInterval = baseCooldown / weaponPorts.size
         if (shipFireTimer <= 0) {
             if (fireSequenceIndex >= weaponPorts.size) fireSequenceIndex = 0
@@ -248,7 +246,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 val fireOrigin = getPodWorldPosition(fireSequenceIndex, shipW, shipH, body.angle)
                 val hasNose = maxPorts % 2 != 0
                 val podSide = if (hasNose && fireSequenceIndex == 0) 0f else if ((fireSequenceIndex - (if (hasNose) 1 else 0)) % 2 == 0) 1f else -1f
-                val fireDir = findBestSideTarget(fireOrigin, podSide, body.angle, potentialTargets) ?: defaultTargetDir
+                val fireDir = findSemiRandomTarget(fireOrigin, podSide, body.angle, potentialTargets) ?: defaultTargetDir
                 weapon.fire(world, this, fireOrigin, fireDir, onProjectileCreated)
                 fireSequenceIndex++
                 shipFireTimer = shotInterval
@@ -275,7 +273,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             val fireOrigin = getPodWorldPosition(i, shipW, shipH, body.angle)
             val hasNose = maxPorts % 2 != 0
             val podSide = if (hasNose && i == 0) 0f else if ((i - (if (hasNose) 1 else 0)) % 2 == 0) 1f else -1f
-            val fireDir = findBestSideTarget(fireOrigin, podSide, body.angle, potentialTargets) ?: Vector2(MathUtils.cos(body.angle), MathUtils.sin(body.angle))
+            val fireDir = findSemiRandomTarget(fireOrigin, podSide, body.angle, potentialTargets) ?: Vector2(MathUtils.cos(body.angle), MathUtils.sin(body.angle))
             val beamEnd = fireOrigin.cpy().add(fireDir.cpy().scl(30f * scale))
             var finalEnd = beamEnd.cpy()
             world.rayCast({ fixture, point, _, fraction ->
@@ -293,26 +291,36 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         isCharging = false
     }
 
-    private fun findBestSideTarget(origin: Vector2, side: Float, bodyAngleRad: Float, targets: List<Ship>): Vector2? {
+    private fun findSemiRandomTarget(origin: Vector2, side: Float, bodyAngleRad: Float, targets: List<Ship>): Vector2? {
         var closest: Ship? = null
         var minDist = Float.MAX_VALUE
         val forward = Vector2(MathUtils.cos(bodyAngleRad), MathUtils.sin(bodyAngleRad))
         val right = forward.cpy().rotate90(-1)
+
         for (target in targets) {
             if (target == this || target.health <= 0) continue
             val toTarget = target.body.position.cpy().sub(origin)
             val dist = toTarget.len2()
             if (side != 0f) {
                 val dot = toTarget.dot(right)
-                val isOnCorrectSide = if (side > 0) dot > 0 else dot < 0
-                if (!isOnCorrectSide) continue
+                if ((side > 0 && dot <= 0) || (side < 0 && dot >= 0)) continue
             }
             if (dist < minDist) {
                 minDist = dist
                 closest = target
             }
         }
-        return closest?.let { it.body.position.cpy().sub(origin).nor() }
+
+        return closest?.let { target ->
+            val toTarget = target.body.position.cpy().sub(origin)
+            val dist = toTarget.len()
+            val targetDir = toTarget.scl(1f / dist)
+            val halfShipSize = (1.5f * target.scale) / 2f
+            val maxAngleFromDistance = MathUtils.atan2(halfShipSize, dist) * MathUtils.radiansToDegrees
+            val maxSpread = Math.min(15f, maxAngleFromDistance)
+            targetDir.rotateDeg(MathUtils.random(-maxSpread, maxSpread))
+            targetDir.nor()
+        }
     }
 
     open fun takeDamage(amount: Float, impactPoint: Vector2? = null) {
@@ -329,14 +337,17 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 damageTexture(impactPoint)
             }
         }
-        if (health <= 0) die()
     }
+
     private fun damageTexture(impactWorldPos: Vector2) {
         val relativePos = impactWorldPos.cpy().sub(body.position)
         relativePos.rotateDeg(90f - body.angle * MathUtils.radiansToDegrees)
-        val size = 1.5f * scale
-        val px = ((relativePos.x / size + 0.5f) * pixmap.width).toInt()
-        val py = ((0.5f - relativePos.y / size) * pixmap.height).toInt()
+        val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
+        val lengthScale = 1f + progress * 2f
+        val shipW = 1.5f * scale
+        val shipH = 1.5f * scale * lengthScale
+        val px = ((relativePos.x / shipW + 0.5f) * pixmap.width).toInt()
+        val py = ((0.5f - relativePos.y / shipH) * pixmap.height).toInt()
         pixmap.blending = Pixmap.Blending.None
         val damageSize = MathUtils.random(4, 8)
         val startX = px - damageSize / 2
@@ -349,22 +360,24 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                     val colorInt = pixmap.getPixel(fx, fy)
                     val alpha = (colorInt and 0x000000ff)
                     if (alpha > 0) {
-                        pixmap.drawPixel(fx, fy, Color.rgba8888(currentFlickerColor))
+                        pixmap.drawPixel(fx, fy, Color.rgba8888(currentFlickerColor.r, currentFlickerColor.g, currentFlickerColor.b, 1f))
+                        damagedPixels[fy * 64 + fx] = true
                     }
                 }
             }
         }
-        texture.draw(pixmap, 0, 0)
     }
+
     open fun die() {}
     fun dispose() {
         texture.dispose()
         pixmap.dispose()
     }
     fun evolveShip() {
-        pixmap.dispose()
-        texture.dispose()
-        pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, level)
-        texture = Texture(pixmap)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
+        ProceduralTextureGenerator.drawShipToPixmap(pixmap, shipColor, level)
+        texture.draw(pixmap, 0, 0)
+        damagedPixels.fill(false)
     }
 }

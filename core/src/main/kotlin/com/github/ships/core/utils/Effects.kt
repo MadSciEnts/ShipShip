@@ -1,6 +1,8 @@
 package com.github.ships.core.utils
 
+import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.graphics.Color
+import com.badlogic.gdx.graphics.GL20
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer
 import com.badlogic.gdx.math.Interpolation
 import com.badlogic.gdx.math.MathUtils
@@ -8,28 +10,30 @@ import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.utils.Array
 import com.badlogic.gdx.utils.Pool
 
-class DamageParticle(var x: Float = 0f, var y: Float = 0f, val color: Color = Color.WHITE.cpy(), var isDebris: Boolean = false, var isExplosion: Boolean = false, var baseSize: Float = 0.12f) {
+class DamageParticle(var x: Float = 0f, var y: Float = 0f, val color: Color = Color.WHITE.cpy(), var isDebris: Boolean = false, var isExplosion: Boolean = false, var isPickup: Boolean = false, var isShieldEnergy: Boolean = false, var baseSize: Float = 0.12f) {
     var lifeTime = 0f
     var maxLife = 0.2f
     val velocity = Vector2()
     var rotation = 0f
     var rotateSpeed = 0f
 
-    fun init(x: Float, y: Float, color: Color, isDebris: Boolean, isExplosion: Boolean, size: Float, lifetime: Float = 0.2f) {
+    fun init(x: Float, y: Float, color: Color, isDebris: Boolean, isExplosion: Boolean, isPickup: Boolean, isShieldEnergy: Boolean, size: Float, lifetime: Float = 0.2f) {
         this.x = x
         this.y = y
         this.color.set(color)
         this.isDebris = isDebris
         this.isExplosion = isExplosion
+        this.isPickup = isPickup
+        this.isShieldEnergy = isShieldEnergy
         this.baseSize = size
-        this.maxLife = lifetime
+        this.maxLife = if (isDebris) MathUtils.random(1f, 5f) else lifetime
         this.lifeTime = maxLife
         this.rotation = MathUtils.random(360f)
         this.rotateSpeed = MathUtils.random(-60f, 60f)
 
         if (isDebris) {
             this.velocity.set(MathUtils.random(-0.3f, 0.3f), MathUtils.random(-0.3f, 0.3f))
-        } else if (isExplosion) {
+        } else if (isExplosion || isPickup || isShieldEnergy) {
             this.velocity.set(MathUtils.random(-3f, 3f), MathUtils.random(-3f, 3f))
         } else {
             this.velocity.set(MathUtils.random(-5f, 5f), MathUtils.random(-5f, 5f))
@@ -42,14 +46,14 @@ class DamageParticle(var x: Float = 0f, var y: Float = 0f, val color: Color = Co
         y += velocity.y * dt
         rotation += rotateSpeed * dt
 
-        if (isExplosion) {
+        if (isExplosion || isPickup || isShieldEnergy) {
             velocity.scl(0.95f)
         }
     }
 
     fun getCurrentSize(): Float {
-        val lifeRatio = lifeTime / maxLife
-        if (isExplosion) {
+        val lifeRatio = MathUtils.clamp(lifeTime / maxLife, 0f, 1f)
+        if (isExplosion || isShieldEnergy) {
             val progress = 1f - lifeRatio
             return if (progress < 0.2f) {
                 baseSize * (progress / 0.2f)
@@ -62,8 +66,8 @@ class DamageParticle(var x: Float = 0f, var y: Float = 0f, val color: Color = Co
 }
 
 class ShieldEffect(var x: Float = 0f, var y: Float = 0f, var radius: Float = 0f) {
-    var lifeTime = 0.3f
-    val maxLife = 0.3f
+    var lifeTime = 0.5f
+    val maxLife = 0.5f
 }
 
 class EffectManager {
@@ -80,7 +84,7 @@ class EffectManager {
     fun spawnImpact(x: Float, y: Float, shipWidth: Float) {
         for (i in 0 until 6) {
             val p = particlePool.obtain()
-            p.init(x, y, Color(MathUtils.random(), MathUtils.random(), MathUtils.random(), 1f), false, false, 0.12f)
+            p.init(x, y, Color(MathUtils.random(), MathUtils.random(), MathUtils.random(), 1f), false, false, false, false, 0.12f)
             particles.add(p)
         }
 
@@ -88,7 +92,7 @@ class EffectManager {
             val p = particlePool.obtain()
             val size = shipWidth * MathUtils.random(0.05f, 0.1f)
             val grey = MathUtils.random(0.3f, 0.6f)
-            p.init(x, y, Color(grey, grey, grey, 1f), true, false, size, MathUtils.random(1f, 5f))
+            p.init(x, y, Color(grey, grey, grey, 1f), true, false, false, false, size, MathUtils.random(1f, 5f))
             particles.add(p)
         }
     }
@@ -96,21 +100,17 @@ class EffectManager {
     fun spawnExplosion(x: Float, y: Float, shipWidth: Float, shipHeight: Float) {
         for (i in 0 until 30) {
             val p = particlePool.obtain()
-
-            // Generate half-saturated colors for explosion
             val color = Color()
             val type = MathUtils.random(2)
             when(type) {
-                0 -> color.fromHsv(0f, 0.5f, 1f) // Half-saturated Red
-                1 -> color.fromHsv(60f, 0.5f, 1f) // Half-saturated Yellow
-                else -> color.set(1f, 1f, 1f, 1f) // White
+                0 -> color.fromHsv(0f, 0.5f, 1f)
+                1 -> color.fromHsv(60f, 0.5f, 1f)
+                else -> color.set(1f, 1f, 1f, 1f)
             }
-
             val rx = x + MathUtils.random(-shipWidth / 2f, shipWidth / 2f)
             val ry = y + MathUtils.random(-shipHeight / 2f, shipHeight / 2f)
-
             val size = Math.max(shipWidth, shipHeight) * 0.25f
-            p.init(rx, ry, color, false, true, size, 0.5f)
+            p.init(rx, ry, color, false, true, false, false, size, 0.5f)
             particles.add(p)
         }
 
@@ -120,7 +120,15 @@ class EffectManager {
             val ry = y + MathUtils.random(-shipHeight / 2f, shipHeight / 2f)
             val size = Math.max(shipWidth, shipHeight) * MathUtils.random(0.05f, 0.15f)
             val grey = MathUtils.random(0.2f, 0.5f)
-            p.init(rx, ry, Color(grey, grey, grey, 1f), true, false, size, 2.0f)
+            p.init(rx, ry, Color(grey, grey, grey, 1f), true, false, false, false, size, 2.0f)
+            particles.add(p)
+        }
+    }
+
+    fun spawnPickupEffect(x: Float, y: Float) {
+        for (i in 0 until 10) {
+            val p = particlePool.obtain()
+            p.init(x, y, Color.WHITE.cpy(), false, false, true, false, 0.3f, 0.4f)
             particles.add(p)
         }
     }
@@ -132,6 +140,13 @@ class EffectManager {
         s.radius = radius
         s.lifeTime = s.maxLife
         shields.add(s)
+
+        for (i in 0 until 8) {
+            val p = particlePool.obtain()
+            val blue = Color(0.2f, 0.6f, 1f, 1f)
+            p.init(x, y, blue, false, false, false, true, radius * 0.3f, 0.5f)
+            particles.add(p)
+        }
     }
 
     fun update(dt: Float) {
@@ -157,12 +172,13 @@ class EffectManager {
     }
 
     fun render(shapeRenderer: ShapeRenderer) {
+        Gdx.gl.glEnable(GL20.GL_BLEND)
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
         for (p in particles) {
-            val lifeRatio = p.lifeTime / p.maxLife
+            val lifeRatio = MathUtils.clamp(p.lifeTime / p.maxLife, 0f, 1f)
             val currentSize = p.getCurrentSize()
 
-            if (p.isExplosion) {
+            if (p.isExplosion || p.isShieldEnergy) {
                 shapeRenderer.setColor(p.color.r, p.color.g, p.color.b, p.color.a * lifeRatio * 0.8f)
                 shapeRenderer.circle(p.x, p.y, currentSize, 12)
             } else if (p.isDebris) {
@@ -176,11 +192,16 @@ class EffectManager {
                 shapeRenderer.circle(p.x, p.y, currentSize, 6)
             }
         }
+        shapeRenderer.end()
 
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line)
         for (s in shields) {
             val alpha = s.lifeTime / s.maxLife
-            shapeRenderer.setColor(0.2f, 0.6f, 1f, alpha * 0.5f)
-            shapeRenderer.circle(s.x, s.y, s.radius * (1.2f - alpha * 0.2f), 20)
+            for (i in 1..3) {
+                val ringRadius = s.radius * (1.0f + (1.0f - alpha) * i * 0.5f)
+                shapeRenderer.setColor(0.2f, 0.6f, 1f, alpha * 0.6f / i)
+                shapeRenderer.circle(s.x, s.y, ringRadius, 30)
+            }
         }
         shapeRenderer.end()
     }

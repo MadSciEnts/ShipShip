@@ -5,6 +5,7 @@ import com.badlogic.gdx.graphics.Color
 import com.badlogic.gdx.graphics.Texture
 import com.badlogic.gdx.graphics.g2d.SpriteBatch
 import com.badlogic.gdx.math.Vector2
+import com.badlogic.gdx.math.Vector3
 import com.badlogic.gdx.physics.box2d.*
 import com.github.ships.core.utils.ProceduralTextureGenerator
 
@@ -20,29 +21,28 @@ class Projectile(
     val chargeMultiplier: Float = 1.0f
 ) {
     var body: Body
-    // Using a more square-ish or wide texture for enemy projectiles
     val isEnemy = owner is EnemyShip
+
     val texture: Texture = if (isEnemy) {
-        ProceduralTextureGenerator.createRectangleTexture(40, 12, color)
+        ProceduralTextureGenerator.getRectangleTexture(20, 20, color)
     } else {
-        ProceduralTextureGenerator.createRectangleTexture(12, 40, color)
+        ProceduralTextureGenerator.getRectangleTexture(12, 40, color)
     }
 
     var active = true
-    var lifeTime = 2f
+    var lifeTime = if (isEnemy) 4f else 15f
+    private var rotationTimer = 0f
 
     private val damageScale = (1.5f + (damage - 1f) * 0.1f) * chargeMultiplier
 
-    // Swap width and height for enemy projectiles to make them "wider than they are long"
-    private val baseWidth = (if (isEnemy) 1.0f else 0.3f) * damageScale
-    private val baseHeight = (if (isEnemy) 0.3f else 1.0f) * damageScale
+    private val baseWidth = (if (isEnemy) 0.5f else 0.3f) * damageScale
+    private val baseHeight = (if (isEnemy) 0.5f else 1.0f) * damageScale
 
     init {
         val bodyDef = BodyDef().apply {
             type = BodyDef.BodyType.DynamicBody
             position.set(x, y)
             bullet = true
-            // Match texture rotation logic
             angle = direction.angleRad() - (Math.PI.toFloat() / 2f)
         }
         body = world.createBody(bodyDef)
@@ -58,18 +58,36 @@ class Projectile(
         shape.dispose()
     }
 
-    fun update(dt: Float, zoom: Float, worldWidth: Float) {
+    fun update(dt: Float, cameraPos: Vector3, zoom: Float, worldWidth: Float, worldHeight: Float) {
         lifeTime -= dt
-        if (lifeTime <= 0) active = false
 
-        val worldSpeed = baseScreenSpeed * (worldWidth * zoom)
+        val worldVisibleW = worldWidth * zoom
+        val worldVisibleH = worldHeight * zoom
+        val left = cameraPos.x - worldVisibleW / 2f
+        val right = cameraPos.x + worldVisibleW / 2f
+        val bottom = cameraPos.y - worldVisibleH / 2f
+        val top = cameraPos.y + worldVisibleH / 2f
+
+        val isOffScreen = body.position.x < left || body.position.x > right ||
+                          body.position.y < bottom || body.position.y > top
+
+        if (isEnemy) {
+            if (lifeTime <= 0) active = false
+            rotationTimer += dt * 500f
+        } else {
+            if (isOffScreen) active = false
+            if (lifeTime <= 0) active = false
+        }
+
+        val worldSpeed = baseScreenSpeed * worldVisibleW
         body.setLinearVelocity(direction.x * worldSpeed, direction.y * worldSpeed)
     }
 
     fun render(batch: SpriteBatch, zoom: Float, worldWidth: Float) {
-        val angle = body.angle * 57.295776f
-        val pixelsPerUnit = Gdx.graphics.width.toFloat() / (worldWidth * zoom)
-        val minWorldSize = 5.0f / pixelsPerUnit
+        val angle = if (isEnemy) rotationTimer else body.angle * 57.295776f
+
+        val unitsPerPixel = (worldWidth * zoom) / Gdx.graphics.width.toFloat()
+        val minWorldSize = 5.0f * unitsPerPixel
 
         val renderWidth = Math.max(baseWidth, minWorldSize)
         val renderHeight = Math.max(baseHeight, minWorldSize * (baseHeight / baseWidth))
@@ -83,6 +101,6 @@ class Projectile(
     }
 
     fun dispose() {
-        texture.dispose()
+        // Texture is managed
     }
 }

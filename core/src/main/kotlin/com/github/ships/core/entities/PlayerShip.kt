@@ -1,6 +1,7 @@
 package com.github.ships.core.entities
 
 import com.badlogic.gdx.graphics.Color
+import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.physics.box2d.*
 import com.badlogic.gdx.physics.box2d.World
@@ -16,7 +17,7 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
         level = 1
         updateStats()
         createBody()
-        baseMaxSpeed = 12f // Increased to double speed (from 6f)
+        baseMaxSpeed = 12f
     }
 
     override fun createBody() {
@@ -46,14 +47,25 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
     }
 
     fun applyInput(moveX: Float, moveY: Float, dt: Float) {
-        // Multiplied base force to match the double baseMaxSpeed
         val forceMultiplier = 30f * scale
         val force = Vector2(moveX, moveY).scl(forceMultiplier)
         body.applyForceToCenter(force, true)
 
         if (force.len2() > 0.01f) {
             val targetAngle = force.angleRad()
-            body.setTransform(body.position, targetAngle)
+
+            // Slow down rotation as level increases
+            // Base lerp factor 0.15f, reduced as level grows
+            val rotationSpeedFactor = 1.0f / (1.0f + (level - 1) * 0.05f)
+            val lerpFactor = 0.15f * rotationSpeedFactor
+
+            var currentAngle = body.angle
+            // Normalize angle using MathUtils constants
+            while (currentAngle < -MathUtils.PI) currentAngle += MathUtils.PI * 2f
+            while (currentAngle > MathUtils.PI) currentAngle -= MathUtils.PI * 2f
+
+            val newAngle = MathUtils.lerpAngle(currentAngle, targetAngle, lerpFactor)
+            body.setTransform(body.position, newAngle)
         }
     }
 

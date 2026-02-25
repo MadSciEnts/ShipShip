@@ -17,7 +17,7 @@ class Missile(
     val color: Color
 ) {
     var body: Body
-    private val texture: Texture = ProceduralTextureGenerator.createCircleTexture(6, color)
+    private val texture: Texture = ProceduralTextureGenerator.getCircleTexture(6, color)
     var active = true
     var lifeTime = 5f
     private val steeringForce = 5f
@@ -52,7 +52,6 @@ class Missile(
             body.applyForceToCenter(steering, true)
             body.setTransform(body.position, body.linearVelocity.angleRad())
         } else {
-            // Just move forward if no target
             val forward = Vector2(1f, 0f).setAngleRad(body.angle).scl(speed)
             body.linearVelocity = forward
         }
@@ -63,7 +62,6 @@ class Missile(
     }
 
     fun dispose() {
-        world.destroyBody(body)
-        texture.dispose()
+        // Texture is managed
     }
 }

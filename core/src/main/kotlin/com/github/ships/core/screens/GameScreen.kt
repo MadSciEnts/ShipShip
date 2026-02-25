@@ -21,10 +21,7 @@ import com.badlogic.gdx.utils.Array
 import com.badlogic.gdx.utils.viewport.ExtendViewport
 import com.badlogic.gdx.utils.viewport.ScreenViewport
 import com.github.ships.core.ShipShipGame
-import com.github.ships.core.entities.EnemyShip
-import com.github.ships.core.entities.PlayerShip
-import com.github.ships.core.entities.Projectile
-import com.github.ships.core.entities.Ship
+import com.github.ships.core.entities.*
 import com.github.ships.core.utils.EffectManager
 import com.github.ships.core.utils.ProceduralTextureGenerator
 import com.github.ships.core.utils.Starfield
@@ -41,7 +38,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private val player = PlayerShip(world, 0f, 0f)
     private val enemies = Array<EnemyShip>()
     private val projectiles = Array<Projectile>()
-    private val starfield = Starfield(300)
+    private val crystals = Array<ExperienceCrystal>()
+    private val starfield = Starfield()
     private val effectManager = EffectManager()
 
     private val uiStage = Stage(ScreenViewport())
@@ -55,6 +53,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private var isCharging = false
 
     private val bodiesToRemove = Array<Body>()
+    private val enemiesToSpawn = Array<Pair<Vector2, Int>>()
 
     init {
         setupUI()
@@ -69,8 +68,11 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 val a = contact.fixtureA.body.userData
                 val b = contact.fixtureB.body.userData
 
-                if (a is Projectile && b is Ship) handleCollision(a, b)
-                else if (b is Projectile && a is Ship) handleCollision(b, a)
+                if (a is Projectile && b is Ship) handleProjectileCollision(a, b)
+                else if (b is Projectile && a is Ship) handleProjectileCollision(b, a)
+
+                if (a is ExperienceCrystal && b is PlayerShip) handleCrystalPickup(a, b)
+                else if (b is ExperienceCrystal && a is PlayerShip) handleCrystalPickup(b, a)
             }
             override fun endContact(contact: Contact) {}
             override fun preSolve(contact: Contact, oldManifold: Manifold) {}
@@ -78,24 +80,24 @@ class GameScreen(val game: ShipShipGame) : Screen {
         })
     }
 
-    private fun handleCollision(projectile: Projectile, ship: Ship) {
+    private fun handleProjectileCollision(projectile: Projectile, ship: Ship) {
         if (projectile.active && projectile.owner != ship) {
             val impactPos = projectile.body.position.cpy()
-
             if (ship.shield > 0) {
                 effectManager.spawnShieldHit(impactPos.x, impactPos.y, 0.8f * ship.scale)
             }
-
             ship.takeDamage(projectile.damage, impactPos)
             projectile.active = false
+            val unitsPerPixel = (viewport.worldWidth * camera.zoom) / Gdx.graphics.width.toFloat()
+            effectManager.spawnImpact(impactPos.x, impactPos.y, unitsPerPixel)
+        }
+    }
 
-            // Scaled debris based on ship size (1.5 is base size)
-            val shipWidth = 1.5f * ship.scale
-            effectManager.spawnImpact(impactPos.x, impactPos.y, shipWidth)
-
-            if (ship is EnemyShip && ship.health <= 0) {
-                player.addExperience(50f * ship.level)
-            }
+    private fun handleCrystalPickup(crystal: ExperienceCrystal, ship: PlayerShip) {
+        if (crystal.active) {
+            ship.addExperience(crystal.xpAmount)
+            crystal.active = false
+            effectManager.spawnPickupEffect(ship.body.position.x, ship.body.position.y)
         }
     }
 
@@ -184,12 +186,13 @@ class GameScreen(val game: ShipShipGame) : Screen {
         val testBtnSize = fireBtnSize / 2f
         val margin = 50f
 
-        if (width > height) {
+        if (width > height) { // Landscape
             fireButton.setBounds(width - fireBtnSize - margin, margin, fireBtnSize, fireBtnSize)
             chargeButton.setBounds(width - fireBtnSize - margin, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
-        } else {
-            fireButton.setBounds(width / 2f + margin, margin, fireBtnSize, fireBtnSize)
-            chargeButton.setBounds(width / 2f + margin, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
+        } else { // Portrait
+            val portraitX = width - fireBtnSize - margin
+            fireButton.setBounds(portraitX, margin, fireBtnSize, fireBtnSize)
+            chargeButton.setBounds(portraitX, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
         }
 
         levelUpBtn.setBounds(20f, height / 2f + testBtnSize / 2f + 10f, testBtnSize, testBtnSize)
@@ -200,23 +203,27 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
     private fun spawnEnemy() {
         val angle = MathUtils.random(0f, MathUtils.PI2)
-        val dist = 25f * player.scale
+        val visibleW = viewport.worldWidth * camera.zoom
+        val visibleH = viewport.worldHeight * camera.zoom
+        val dist = Math.max(visibleW, visibleH) * MathUtils.random(2.0f, 3.0f)
+
         val ex = player.body.position.x + MathUtils.cos(angle) * dist
         val ey = player.body.position.y + MathUtils.sin(angle) * dist
 
-        val minLvl = Math.max(1, player.level - 2)
-        val maxLvl = player.level + 2
-        val spawnLvl = MathUtils.random(minLvl, maxLvl)
+        val originDist = Vector2(ex, ey).len()
+        val spawnLvl = MathUtils.clamp(Math.round(originDist / 100f), 1, 1000)
 
         val e = EnemyShip(world, ex, ey, spawnLvl)
         e.onDeath = { ship ->
-            // Use the new spawnExplosion logic for ship destruction
             val progress = MathUtils.clamp((ship.level - 1) / 49f, 0f, 1f)
             val lengthScale = 1f + progress * 2f
             val shipW = 1.5f * ship.scale
             val shipH = 1.5f * ship.scale * lengthScale
-
             effectManager.spawnExplosion(ship.body.position.x, ship.body.position.y, shipW, shipH)
+
+            for (i in 0 until ship.level) {
+                crystals.add(ExperienceCrystal(world, ship.body.position.x, ship.body.position.y, 10f))
+            }
         }
         enemies.add(e)
     }
@@ -235,7 +242,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
     }
 
     override fun render(delta: Float) {
-        Gdx.gl.glClearColor(0f, 0f, 0f, 1f)
+        updateBackgroundColor()
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT)
 
         player.checkEvolution()
@@ -246,6 +253,11 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 world.destroyBody(bodyIter.next())
                 bodyIter.remove()
             }
+
+            for (spawn in enemiesToSpawn) {
+                enemies.add(EnemyShip(world, spawn.first.x, spawn.first.y, spawn.second))
+            }
+            enemiesToSpawn.clear()
         }
 
         if (player.health <= 0) {
@@ -255,7 +267,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         world.step(1/60f, 6, 2)
 
-        if (enemies.size < 5 + player.level) spawnEnemy()
+        if (enemies.size < 10 + (player.level / 2)) spawnEnemy()
 
         player.update(delta)
         player.applyInput(touchpad.knobPercentX, touchpad.knobPercentY, delta)
@@ -286,27 +298,49 @@ class GameScreen(val game: ShipShipGame) : Screen {
             player.fireWeapons(fireDir, { projectiles.add(it) }, potentialTargets.toList())
         }
 
-        val projIter = projectiles.iterator()
-        while (projIter.hasNext()) {
-            val p = projIter.next()
-            p.update(delta, camera.zoom, viewport.worldWidth)
+        // STABILITY FIX: Use traditional for loop to avoid "iterator cannot be used nested" crash
+        for (i in 0 until projectiles.size) {
+            val p = projectiles[i]
+            p.update(delta, camera.position, camera.zoom, viewport.worldWidth, viewport.worldHeight)
             if (!p.active) {
                 bodiesToRemove.add(p.body)
                 p.texture.dispose()
-                projIter.remove()
+                projectiles.removeIndex(i)
+                break // Safely exit and re-evaluate next frame
             }
         }
 
-        val enemyIter = enemies.iterator()
-        while (enemyIter.hasNext()) {
-            val e = enemyIter.next()
+        val allEnemies = enemies.toList()
+        for (i in 0 until enemies.size) {
+            val e = enemies[i]
             val targetList = Array<Ship>()
             targetList.add(player)
-            e.updateAI(player, delta, { projectiles.add(it) }, targetList.toList())
+
+            if (e.level >= 30 && MathUtils.random() < 0.005f) {
+                val spawnDir = player.body.position.cpy().sub(e.body.position).nor()
+                val minionX = e.body.position.x + spawnDir.x * 2f
+                val minionY = e.body.position.y + spawnDir.y * 2f
+                enemiesToSpawn.add(Vector2(minionX, minionY) to 1)
+            }
+
+            e.updateAI(player, delta, { projectiles.add(it) }, targetList.toList(), allEnemies)
             if (e.health <= 0) {
                 e.die()
                 bodiesToRemove.add(e.body)
-                enemyIter.remove()
+                enemies.removeIndex(i)
+                break
+            }
+        }
+
+        for (i in 0 until crystals.size) {
+            val c = crystals[i]
+            val visibleW = viewport.worldWidth * camera.zoom
+            val visibleH = viewport.worldHeight * camera.zoom
+            c.update(delta, player, camera.position.x - visibleW/2f, camera.position.x + visibleW/2f, camera.position.y - visibleH/2f, camera.position.y + visibleH/2f, camera.zoom, viewport.worldWidth)
+            if (!c.active) {
+                bodiesToRemove.add(c.body)
+                crystals.removeIndex(i)
+                break
             }
         }
 
@@ -334,6 +368,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         player.render(batch)
         enemies.forEach { it.render(batch) }
         projectiles.forEach { it.render(batch, camera.zoom, viewport.worldWidth) }
+        crystals.forEach { it.render(batch, camera.zoom, viewport.worldWidth) }
         batch.end()
 
         shapeRenderer.projectionMatrix = camera.combined
@@ -345,6 +380,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
             renderEdgeGlow()
         }
 
+        renderEnemyArrows()
+
         val px = Math.round(player.body.position.x)
         val py = Math.round(player.body.position.y)
         posLabel.setText("( $px, $py )")
@@ -355,6 +392,45 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         renderHUD()
         renderRadar()
+    }
+
+    private fun updateBackgroundColor() {
+        val pos = player.body.position
+        val dist = pos.len()
+        val saturation = MathUtils.clamp(dist / 10000f, 0f, 1f) * 0.2f
+
+        val bgColor = Color(0f, 0f, 0f, 1f)
+        if (dist > 0) {
+            val angle = pos.angleDeg()
+            val redComp: Float
+            val greenComp: Float
+            val blueComp: Float
+
+            if (angle < 90) {
+                val t = angle / 90f
+                redComp = 1f - t
+                greenComp = 1f
+                blueComp = 0f
+            } else if (angle < 180) {
+                val t = (angle - 90f) / 90f
+                redComp = t
+                greenComp = 1f - t
+                blueComp = 0f
+            } else if (angle < 270) {
+                val t = (angle - 180f) / 90f
+                redComp = 1f - t
+                greenComp = 0f
+                blueComp = t
+            } else {
+                val t = (angle - 270f) / 90f
+                redComp = t
+                greenComp = t
+                blueComp = 1f - t
+            }
+
+            bgColor.set(redComp * saturation, greenComp * saturation, blueComp * saturation, 1f)
+        }
+        Gdx.gl.glClearColor(bgColor.r, bgColor.g, bgColor.b, 1f)
     }
 
     private fun renderEdgeGlow() {
@@ -380,6 +456,38 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.end()
     }
 
+    private fun renderEnemyArrows() {
+        val visibleW = viewport.worldWidth * camera.zoom
+        val visibleH = viewport.worldHeight * camera.zoom
+        val left = camera.position.x - visibleW/2f
+        val right = camera.position.x + visibleW/2f
+        val bottom = camera.position.y - visibleH/2f
+        val top = camera.position.y + visibleH/2f
+
+        shapeRenderer.projectionMatrix = camera.combined
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
+
+        for (enemy in enemies) {
+            val ex = enemy.body.position.x
+            val ey = enemy.body.position.y
+
+            if (ex < left || ex > right || ey < bottom || ey > top) {
+                val toEnemy = Vector2(ex - camera.position.x, ey - camera.position.y)
+                val dist = toEnemy.len()
+                val dir = toEnemy.nor()
+                val cameraThreshold = Math.max(visibleW, visibleH) / 2f
+                val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.2f, 1.0f)
+
+                val arrowX = MathUtils.clamp(camera.position.x + dir.x * (visibleW/2f), left, right)
+                val arrowY = MathUtils.clamp(camera.position.y + dir.y * (visibleH/2f), bottom, top)
+
+                shapeRenderer.setColor(Color.RED.r, Color.RED.g, Color.RED.b, scaleFactor)
+                shapeRenderer.circle(arrowX, arrowY, 0.5f * camera.zoom * scaleFactor)
+            }
+        }
+        shapeRenderer.end()
+    }
+
     private fun renderEnemyHealthBars() {
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
@@ -398,12 +506,13 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private fun renderHUD() {
         shapeRenderer.projectionMatrix = uiStage.viewport.camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
+
         shapeRenderer.setColor(Color.RED)
-        shapeRenderer.rect(20f, uiStage.height - 40f, (player.health / player.maxHealth) * 200f, 20f)
+        shapeRenderer.rect(20f, uiStage.height - 40f, (player.health / player.maxHealth) * 400f, 20f)
         shapeRenderer.setColor(Color.BLUE)
-        shapeRenderer.rect(20f, uiStage.height - 70f, (player.shield / player.maxShield) * 200f, 20f)
-        shapeRenderer.setColor(Color.GREEN)
-        shapeRenderer.rect(20f, uiStage.height - 100f, (player.experience / player.getExperienceThreshold()) * 200f, 10f)
+        shapeRenderer.rect(20f, uiStage.height - 70f, (player.shield / player.maxShield) * 400f, 20f)
+        shapeRenderer.setColor(Color.WHITE)
+        shapeRenderer.rect(20f, uiStage.height - 100f, (player.experience / player.getExperienceThreshold()) * 400f, 10f)
         shapeRenderer.end()
     }
 
@@ -411,7 +520,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
         val radarSize = 250f
         val radarX = uiStage.width - radarSize - 20f
         val radarY = uiStage.height - radarSize - 20f
-        val radarScale = radarSize / (80f * camera.zoom)
+        val radarWorldRange = 80f * camera.zoom
+        val radarScale = radarSize / radarWorldRange
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line)
         shapeRenderer.setColor(Color(0f, 1f, 0f, 0.5f))
@@ -426,9 +536,17 @@ class GameScreen(val game: ShipShipGame) : Screen {
         for (enemy in enemies) {
             val dx = (enemy.body.position.x - player.body.position.x) * radarScale
             val dy = (enemy.body.position.y - player.body.position.y) * radarScale
-
             if (Math.abs(dx) < radarSize / 2 && Math.abs(dy) < radarSize / 2) {
                 shapeRenderer.circle(radarX + radarSize / 2 + dx, radarY + radarSize / 2 + dy, 3f)
+            }
+        }
+
+        shapeRenderer.setColor(Color.YELLOW)
+        for (crystal in crystals) {
+            val dx = (crystal.body.position.x - player.body.position.x) * radarScale
+            val dy = (crystal.body.position.y - player.body.position.y) * radarScale
+            if (Math.abs(dx) < radarSize / 2 && Math.abs(dy) < radarSize / 2) {
+                shapeRenderer.circle(radarX + radarSize / 2 + dx, radarY + radarSize / 2 + dy, 2f)
             }
         }
         shapeRenderer.end()
@@ -452,6 +570,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         player.dispose()
         enemies.forEach { it.dispose() }
         projectiles.forEach { it.dispose() }
+        crystals.forEach { it.dispose() }
         starfield.dispose()
     }
 }

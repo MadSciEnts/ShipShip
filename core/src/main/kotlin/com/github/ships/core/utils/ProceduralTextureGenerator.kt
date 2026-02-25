@@ -9,11 +9,14 @@ import java.util.*
 
 object ProceduralTextureGenerator {
     private val random = Random()
+    private var whitePixel: TextureRegion? = null
+    private val circleCache = mutableMapOf<Pair<Int, Int>, Texture>()
+    private val rectCache = mutableMapOf<Triple<Int, Int, Int>, Texture>()
 
-    fun createShipPixmap(width: Int, height: Int, color: Color, level: Int): Pixmap {
-        val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
-        pixmap.setColor(0f, 0f, 0f, 0f)
-        pixmap.fill()
+    fun drawShipToPixmap(pixmap: Pixmap, color: Color, level: Int) {
+        val width = pixmap.width
+        val height = pixmap.height
+
         pixmap.setColor(color)
         val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
         for (y in 0 until height) {
@@ -31,132 +34,108 @@ object ProceduralTextureGenerator {
         val cockpitW = (width * 0.2f).toInt()
         val cockpitH = (height * 0.15f).toInt()
         pixmap.fillRectangle((width - cockpitW) / 2, (height * 0.7f).toInt(), cockpitW, cockpitH)
+    }
+
+    fun createShipPixmap(width: Int, height: Int, color: Color, level: Int): Pixmap {
+        val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
+        drawShipToPixmap(pixmap, color, level)
         return pixmap
     }
 
-    fun createShipTexture(width: Int, height: Int, color: Color, level: Int): Texture {
-        val pixmap = createShipPixmap(width, height, color, level)
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return texture
-    }
-
     fun createWhitePixel(): TextureRegion {
-        val pixmap = Pixmap(1, 1, Pixmap.Format.RGBA8888)
-        pixmap.setColor(Color.WHITE)
-        pixmap.fill()
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return TextureRegion(texture)
-    }
-
-    fun createCircleTexture(radius: Int, color: Color): Texture {
-        val pixmap = Pixmap(radius * 2, radius * 2, Pixmap.Format.RGBA8888)
-        pixmap.setColor(color)
-        pixmap.fillCircle(radius, radius, radius)
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return texture
-    }
-
-    fun createRectangleTexture(width: Int, height: Int, color: Color): Texture {
-        val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
-        val innerColor = color.cpy()
-        val outerColor = color.cpy().mul(0.5f)
-        pixmap.setColor(outerColor)
-        pixmap.fill()
-        pixmap.setColor(innerColor)
-        pixmap.fillRectangle(width / 4, 0, width / 2, height)
-        pixmap.setColor(Color.WHITE)
-        pixmap.drawLine(width / 2, 0, width / 2, height)
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return texture
-    }
-
-    private fun downsample(source: Pixmap, scale: Int): Pixmap {
-        val result = Pixmap(source.width, source.height, source.format)
-        for (y in 0 until source.height step scale) {
-            for (x in 0 until source.width step scale) {
-                val color = source.getPixel(x, y)
-                for (dy in 0 until scale) {
-                    for (dx in 0 until scale) {
-                        if (x + dx < source.width && y + dy < source.height) {
-                            result.drawPixel(x + dx, y + dy, color)
-                        }
-                    }
-                }
-            }
+        if (whitePixel == null) {
+            val pixmap = Pixmap(1, 1, Pixmap.Format.RGBA8888)
+            pixmap.setColor(Color.WHITE)
+            pixmap.fill()
+            whitePixel = TextureRegion(Texture(pixmap))
         }
-        return result
+        return whitePixel!!
+    }
+
+    fun getCircleTexture(radius: Int, color: Color): Texture {
+        val key = radius to Color.rgba8888(color)
+        return circleCache.getOrPut(key) {
+            val pixmap = Pixmap(radius * 2, radius * 2, Pixmap.Format.RGBA8888)
+            pixmap.setColor(0f, 0f, 0f, 0f)
+            pixmap.fill()
+            pixmap.setColor(color)
+            pixmap.fillCircle(radius, radius, radius)
+            Texture(pixmap)
+        }
+    }
+
+    fun getRectangleTexture(width: Int, height: Int, color: Color): Texture {
+        val key = Triple(width, height, Color.rgba8888(color))
+        return rectCache.getOrPut(key) {
+            val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
+            pixmap.setColor(0f, 0f, 0f, 0f)
+            pixmap.fill()
+
+            val innerColor = color.cpy()
+            val outerColor = color.cpy().mul(0.5f)
+            pixmap.setColor(outerColor)
+            pixmap.fill()
+            pixmap.setColor(innerColor)
+            pixmap.fillRectangle(width / 4, 0, width / 2, height)
+            pixmap.setColor(Color.WHITE)
+            pixmap.drawLine(width / 2, 0, width / 2, height)
+            Texture(pixmap)
+        }
     }
 
     fun createSciFiJoystickBase(size: Int): Texture {
-        // Draw at full res, then pixelate
-        val temp = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
         val center = size / 2
         val radius = size / 2 - 2
-
-        // Background ring gradient
         for (r in radius downTo 0 step 4) {
             val grad = r.toFloat() / radius
-            temp.setColor(0.1f, 0.2f * grad, 0.3f * grad, 0.5f)
-            temp.fillCircle(center, center, r)
+            pixmap.setColor(0.1f, 0.2f * grad, 0.3f * grad, 0.5f)
+            pixmap.fillCircle(center, center, r)
         }
-
-        temp.setColor(0.4f, 0.6f, 1f, 0.8f)
-        temp.drawCircle(center, center, radius)
-        temp.drawCircle(center, center, radius - 4)
-
-        // Technical crosshairs
-        temp.drawLine(center - 20, center, center + 20, center)
-        temp.drawLine(center, center - 20, center, center + 20)
-
-        val pixelated = downsample(temp, 8) // High pixelation factor
-        val texture = Texture(pixelated)
-        temp.dispose()
-        pixelated.dispose()
+        pixmap.setColor(0.4f, 0.6f, 1f, 0.8f)
+        pixmap.drawCircle(center, center, radius)
+        pixmap.drawCircle(center, center, radius - 4)
+        pixmap.drawLine(center - 20, center, center + 20, center)
+        pixmap.drawLine(center, center - 20, center, center + 20)
+        val texture = Texture(pixmap)
+        pixmap.dispose()
         return texture
     }
 
     fun createSciFiJoystickKnob(size: Int): Texture {
-        val temp = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
         val center = size / 2
         val radius = size / 2 - 2
-
-        // Knob body with gradient
         for (r in radius downTo 0 step 2) {
             val grad = 1f - (r.toFloat() / radius)
-            temp.setColor(0.3f + 0.2f * grad, 0.3f + 0.2f * grad, 0.4f + 0.4f * grad, 0.9f)
-            temp.fillCircle(center, center, r)
+            pixmap.setColor(0.3f + 0.2f * grad, 0.3f + 0.2f * grad, 0.4f + 0.4f * grad, 0.9f)
+            pixmap.fillCircle(center, center, r)
         }
-
-        temp.setColor(0.6f, 0.8f, 1f, 1f)
-        temp.drawCircle(center, center, radius)
-
-        val pixelated = downsample(temp, 4)
-        val texture = Texture(pixelated)
-        temp.dispose()
-        pixelated.dispose()
+        pixmap.setColor(0.6f, 0.8f, 1f, 1f)
+        pixmap.drawCircle(center, center, radius)
+        val texture = Texture(pixmap)
+        pixmap.dispose()
         return texture
     }
 
     fun createSciFiButton(width: Int, height: Int, down: Boolean): Texture {
-        val temp = Pixmap(width, height, Pixmap.Format.RGBA8888)
+        val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
         val baseColor = if (down) Color(0.1f, 0.3f, 0.5f, 0.7f) else Color(0.05f, 0.1f, 0.2f, 0.5f)
-
-        temp.setColor(baseColor)
-        temp.fill()
-
-        // Technical outline
-        temp.setColor(0.4f, 0.7f, 1f, 0.9f)
-        temp.drawRectangle(0, 0, width, height)
-        temp.drawRectangle(4, 4, width - 8, height - 8)
-
-        val pixelated = downsample(temp, 6)
-        val texture = Texture(pixelated)
-        temp.dispose()
-        pixelated.dispose()
+        pixmap.setColor(baseColor)
+        pixmap.fill()
+        pixmap.setColor(0.4f, 0.7f, 1f, 0.9f)
+        pixmap.drawRectangle(0, 0, width, height)
+        pixmap.drawRectangle(4, 4, width - 8, height - 8)
+        val texture = Texture(pixmap)
+        pixmap.dispose()
         return texture
     }
 }

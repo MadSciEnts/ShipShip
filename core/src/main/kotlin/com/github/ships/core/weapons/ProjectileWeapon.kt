@@ -29,7 +29,7 @@ class ProjectileWeapon(rarity: Rarity, cooldown: Float = 0.2f) : Weapon("Auto-Ca
         } else if (owner is EnemyShip) {
             projectileColor.fromHsv(0f, 0.3f, 1f)
             projectileColor.a = 1f
-            screenSpeed = 0.3f
+            screenSpeed = 0.7f
             // Enemy projectiles are half as long
             lengthMult = 0.5f
         } else {

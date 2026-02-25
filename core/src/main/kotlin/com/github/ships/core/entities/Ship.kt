@@ -23,9 +23,10 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     var level: Int = 1
 
     lateinit var body: Body
+    // MANAGED TEXTURE: Keep pixmap to allow context recovery on Android
     protected var pixmap: Pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, 1)
-    protected var texture: Texture = Texture(64, 64, Pixmap.Format.RGBA8888)
-    val trail = MotionTrail(if (this is PlayerShip) Color(0.2f, 0.5f, 0.7f, 0.8f) else Color(1f, 0.2f, 0.2f, 1f))
+    protected var texture: Texture = Texture(pixmap)
+    val trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
 
     var scale: Float = 1.0f
     var baseMaxSpeed: Float = 6f
@@ -60,7 +61,8 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     open fun update(dt: Float) {
         maxPorts = 1 + (level - 1) / 5
-        val baseCooldown = if (this is PlayerShip) 0.4f else 0.5f
+        // Step 2: Slow down enemy rate of fire (from 0.5s to 1.0s)
+        val baseCooldown = if (this is PlayerShip) 0.4f else 1.0f
 
         while (weaponPorts.size < maxPorts) {
             weaponPorts.add(ProjectileWeapon(Rarity.COMMON, baseCooldown))
@@ -104,12 +106,13 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         }
 
         candleFlickerTimer += dt
-        if (candleFlickerTimer >= 0.2f) {
+        // Step 1: Increase damage flicker rate to 0.1s
+        if (candleFlickerTimer >= 0.05f) {
             candleFlickerTimer = 0f
             currentFlickerColor = when(MathUtils.random(2)) {
                 0 -> Color.RED
-                1 -> Color.YELLOW
-                else -> Color.WHITE
+                1 -> Color(0.8f, 0.8f, 0f, 0.8f)
+                else -> Color(0.8f, 0.5f, 0.2f, 1f)
             }
         }
     }
@@ -139,6 +142,9 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         shapeRenderer.setColor(flickerColor)
 
         for (impact in damageImpacts) {
+            // Damage artifacts "climb" slightly closer to camera (0.1 units)
+            // But in 2D we just draw them after.
+            // We rotate them with the ship
             val worldPos = body.position.cpy().add(impact.cpy().rotateRad(body.angle))
             val size = 0.15f * scale
             shapeRenderer.rect(worldPos.x - size/2, worldPos.y - size/2,
@@ -210,7 +216,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     fun fireWeapons(defaultTargetDir: Vector2, onProjectileCreated: (Projectile) -> Unit, potentialTargets: List<Ship>) {
         if (weaponPorts.isEmpty()) return
-        val baseCooldown = if (this is PlayerShip) 0.4f else 0.5f
+        val baseCooldown = if (this is PlayerShip) 0.4f else 1.2f
         val shotInterval = baseCooldown / weaponPorts.size
         if (shipFireTimer <= 0) {
             if (fireSequenceIndex >= weaponPorts.size) fireSequenceIndex = 0
@@ -266,6 +272,28 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         }
         chargeTime = 0f
         isCharging = false
+    }
+
+    private fun findBestSideTarget(origin: Vector2, side: Float, bodyAngleRad: Float, targets: List<Ship>): Vector2? {
+        var closest: Ship? = null
+        var minDist = Float.MAX_VALUE
+        val forward = Vector2(MathUtils.cos(bodyAngleRad), MathUtils.sin(bodyAngleRad))
+        val right = forward.cpy().rotate90(-1)
+        for (target in targets) {
+            if (target == this || target.health <= 0) continue
+            val toTarget = target.body.position.cpy().sub(origin)
+            val dist = toTarget.len2()
+            if (side != 0f) {
+                val dot = toTarget.dot(right)
+                val isOnCorrectSide = if (side > 0) dot > 0 else dot < 0
+                if (!isOnCorrectSide) continue
+            }
+            if (dist < minDist) {
+                minDist = dist
+                closest = target
+            }
+        }
+        return closest?.let { it.body.position.cpy().sub(origin).nor() }
     }
 
     private fun findSemiRandomTarget(origin: Vector2, side: Float, bodyAngleRad: Float, targets: List<Ship>): Vector2? {

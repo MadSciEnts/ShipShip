@@ -34,9 +34,9 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
         maxShield = 0f
 
         createBody()
-        baseMaxSpeed = 2f
+        baseMaxSpeed = 6f
         // Enemies fire more frequently (reduced cooldown from 1.0 to 0.4)
-        weaponPorts.add(ProjectileWeapon(Rarity.COMMON, 0.4f))
+        weaponPorts.add(ProjectileWeapon(Rarity.COMMON, 0.8f))
     }
 
     override fun createBody() {

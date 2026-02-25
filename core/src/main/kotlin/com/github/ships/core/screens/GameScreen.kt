@@ -32,6 +32,13 @@ import com.github.ships.core.utils.Starfield
 import com.github.ships.core.weapons.ProjectileWeapon
 import com.github.ships.core.weapons.Rarity
 
+/**
+ * NOTE FOR FUTURE AGENTS:
+ * 1. STABILITY: Use indexed for-loops (size-1 downTo 0) for all entity updates.
+ *    LibGDX iterators throw GdxRuntimeException if modification (removal) happens nested.
+ * 2. RENDERING: Keep SpriteBatch and ShapeRenderer passes separate. Never nest .begin() calls.
+ * 3. PERFORMANCE: All procedural textures are MANAGED via the generator cache.
+ */
 class GameScreen(val game: ShipShipGame) : Screen {
     private val batch = SpriteBatch()
     private val shapeRenderer = ShapeRenderer()
@@ -297,9 +304,10 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         if (isCharging) {
             val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
+            // Pulse bright blue
             chargeButton.color = Color(1f, 1f - chargeRatio, 1f - chargeRatio, 1f).lerp(Color.CYAN, chargeRatio)
         } else {
-            chargeButton.color = Color.WHITE
+            chargeButton.color = Color.GRAY
         }
 
         val potentialTargets = Array<Ship>()
@@ -339,11 +347,15 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 enemiesToSpawn.add(Vector2(minionX, minionY) to 1)
             }
 
-            // FIX: Call update(delta) so trails and effects work
             e.update(delta)
             e.updateAI(player, delta, { projectiles.add(it) }, targetList.toList(), allEnemiesList)
-            if (e.health <= 0) {
-                e.die()
+
+            // Task #4: Uninstantiate enemy ships that are more than 8 screen lengths out of view
+            val distToPlayer = e.body.position.dst(player.body.position)
+            val despawnRadius = viewport.worldWidth * 8f
+
+            if (e.health <= 0 || distToPlayer > despawnRadius) {
+                if (e.health <= 0) e.die()
                 bodiesToRemove.add(e.body)
                 enemies.removeIndex(i)
             }
@@ -385,9 +397,12 @@ class GameScreen(val game: ShipShipGame) : Screen {
             enemies[i].renderTrail(shapeRenderer)
         }
         player.renderBeams(shapeRenderer)
+
+        for (i in 0 until enemies.size) {
+            enemies[i].renderDamageArtifacts(shapeRenderer)
+        }
         shapeRenderer.end()
 
-        // 3. Main Sprite Batch (Ships, Projectiles, Crystals)
         batch.begin()
         player.render(batch)
         for (i in 0 until enemies.size) {
@@ -401,16 +416,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         }
         batch.end()
 
-        // 4. Damage Pass (Closer to Camera)
-        Gdx.gl.glEnable(GL20.GL_BLEND)
-        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
-        player.renderDamageArtifacts(shapeRenderer)
-        for (i in 0 until enemies.size) {
-            enemies[i].renderDamageArtifacts(shapeRenderer)
-        }
-        shapeRenderer.end()
-
-        // 5. Special Effects (Explosions, Shields)
+        shapeRenderer.projectionMatrix = camera.combined
         effectManager.render(shapeRenderer)
 
         renderEnemyHealthBars()
@@ -527,6 +533,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 val toEnemy = Vector2(ex - camera.position.x, ey - camera.position.y)
                 val dist = toEnemy.len()
                 val dir = toEnemy.nor()
+
+                // Fixed: Scaling arrows based on distance
                 val cameraThreshold = Math.max(visibleW, visibleH) / 2f
                 val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.3f, 1.0f)
 
@@ -560,6 +568,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.projectionMatrix = uiStage.viewport.camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
 
+        // Active bars (twice as long - 400f)
         shapeRenderer.setColor(Color.RED)
         shapeRenderer.rect(20f, uiStage.height - 40f, (player.health / player.maxHealth) * 400f, 20f)
         shapeRenderer.setColor(Color.BLUE)

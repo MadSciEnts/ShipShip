@@ -31,7 +31,7 @@ class Projectile(
     }
 
     var active = true
-    var lifeTime = if (isEnemy) 4f else 15f
+    var lifeTime = if (isEnemy) 10f else 15f
     private var rotationTimer = 0f
 
     private val damageScale = (1.5f + (damage - 1f) * 0.1f) * chargeMultiplier

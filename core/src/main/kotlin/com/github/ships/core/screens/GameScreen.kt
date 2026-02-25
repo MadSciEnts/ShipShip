@@ -50,13 +50,16 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private lateinit var touchpad: Touchpad
     private lateinit var fireButton: ImageButton
     private lateinit var chargeButton: ImageButton
+    private lateinit var warpButton: ImageButton
     private val chargeButtonDrawables = Array<TextureRegionDrawable>()
+    private val warpButtonDrawables = Array<TextureRegionDrawable>()
 
     private lateinit var levelUpBtn: TextButton
     private lateinit var levelDownBtn: TextButton
     private lateinit var posLabel: Label
     private var isFiring = false
     private var isCharging = false
+    private var isChargingWarp = false
 
     private val font = BitmapFont()
     private val layout = GlyphLayout()
@@ -140,21 +143,24 @@ class GameScreen(val game: ShipShipGame) : Screen {
         fireStyle.down = TextureRegionDrawable(ProceduralTextureGenerator.create8BitAttackButton(250, true))
 
         fireButton = ImageButton(fireStyle)
-        fireButton.setColor(Color.RED)
+        // Task: Button is darker by default (0.4f), bright red when pressed
+        fireButton.setColor(Color(0.4f, 0f, 0f, 1f))
         fireButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isFiring = true
+                fireButton.setColor(Color.RED)
                 return true
             }
             override fun touchUp(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int) {
                 isFiring = false
+                fireButton.setColor(Color(0.4f, 0f, 0f, 1f))
             }
         })
         uiStage.addActor(fireButton)
 
-        // Cache charge button textures for the blue lights effect
         for (i in 0..12) {
             chargeButtonDrawables.add(TextureRegionDrawable(ProceduralTextureGenerator.create8BitChargeButton(250, i / 12f)))
+            warpButtonDrawables.add(TextureRegionDrawable(ProceduralTextureGenerator.create8BitWarpButton(250, i / 12f)))
         }
 
         val chargeStyle = ImageButton.ImageButtonStyle()
@@ -162,7 +168,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         chargeStyle.down = chargeButtonDrawables[0]
 
         chargeButton = ImageButton(chargeStyle)
-        chargeButton.setColor(Color.GRAY)
+        chargeButton.setColor(Color(0.25f, 0.25f, 0.25f, 1.0f))
         chargeButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isCharging = true
@@ -176,6 +182,28 @@ class GameScreen(val game: ShipShipGame) : Screen {
             }
         })
         uiStage.addActor(chargeButton)
+
+        val warpStyle = ImageButton.ImageButtonStyle()
+        warpStyle.up = warpButtonDrawables[0]
+        warpStyle.down = warpButtonDrawables[0]
+
+        warpButton = ImageButton(warpStyle)
+        warpButton.setColor(Color(0.25f, 0.25f, 0.25f, 1.0f))
+        warpButton.addListener(object : ClickListener() {
+            override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
+                isChargingWarp = true
+                player.isCharging = true
+                return true
+            }
+            override fun touchUp(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int) {
+                isChargingWarp = false
+                player.isCharging = false
+                val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
+                player.activateWarp(chargeRatio)
+                player.chargeTime = 0f
+            }
+        })
+        uiStage.addActor(warpButton)
 
         levelUpBtn = TextButton("+", skin, "test")
         levelUpBtn.addListener(object : ClickListener() {
@@ -206,16 +234,19 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private fun updateUIElements() {
         val width = Gdx.graphics.width.toFloat()
         val height = Gdx.graphics.height.toFloat()
-        val fireBtnSize = 250f
+        // Task: Onscreen buttons 20% smaller (250f -> 200f)
+        val fireBtnSize = 200f
         val margin = 50f
 
         if (width > height) { // Landscape
             fireButton.setBounds(width - fireBtnSize - margin, margin, fireBtnSize, fireBtnSize)
             chargeButton.setBounds(width - fireBtnSize - margin, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
+            warpButton.setBounds(width - fireBtnSize - margin, margin + (fireBtnSize + 20f) * 2, fireBtnSize, fireBtnSize)
         } else { // Portrait
             val portraitX = width - fireBtnSize - margin
             fireButton.setBounds(portraitX, margin, fireBtnSize, fireBtnSize)
             chargeButton.setBounds(portraitX, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
+            warpButton.setBounds(portraitX, margin + (fireBtnSize + 20f) * 2, fireBtnSize, fireBtnSize)
         }
 
         val testBtnSizeVal = 125f
@@ -296,6 +327,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         player.update(delta)
         player.applyInput(touchpad.knobPercentX, touchpad.knobPercentY, delta)
 
+        // Logic for standard Charge Button
         if (isCharging && player.shield <= 0) {
             isCharging = false
             player.isCharging = false
@@ -304,17 +336,34 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         if (isCharging) {
             val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
-            // Update texture based on charge level
             val index = (chargeRatio * 12).toInt().coerceIn(0, 12)
             chargeButton.style.up = chargeButtonDrawables[index]
             chargeButton.style.down = chargeButtonDrawables[index]
-
-            // Pulse bright blue
-            chargeButton.color = Color.GRAY.cpy().lerp(Color.CYAN, chargeRatio)
+            chargeButton.color = Color(1f, 1f - chargeRatio, 1f - chargeRatio, 1f).lerp(Color.CYAN, chargeRatio)
         } else {
             chargeButton.style.up = chargeButtonDrawables[0]
             chargeButton.style.down = chargeButtonDrawables[0]
-            chargeButton.color = Color.GRAY
+            chargeButton.color = Color(0.25f, 0.25f, 0.25f, 1.0f)
+        }
+
+        // Logic for Warp Button
+        if (isChargingWarp && player.shield <= 0) {
+            isChargingWarp = false
+            player.isCharging = false
+            player.activateWarp(MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f))
+            player.chargeTime = 0f
+        }
+
+        if (isChargingWarp) {
+            val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
+            val index = (chargeRatio * 12).toInt().coerceIn(0, 12)
+            warpButton.style.up = warpButtonDrawables[index]
+            warpButton.style.down = warpButtonDrawables[index]
+            warpButton.color = Color(1f, 1f - chargeRatio, 1f - chargeRatio, 1f).lerp(Color.CYAN, chargeRatio)
+        } else {
+            warpButton.style.up = warpButtonDrawables[0]
+            warpButton.style.down = warpButtonDrawables[0]
+            warpButton.color = Color(0.25f, 0.25f, 0.25f, 1.0f)
         }
 
         val visibleW = viewport.worldWidth * camera.zoom
@@ -438,6 +487,12 @@ class GameScreen(val game: ShipShipGame) : Screen {
         for (i in 0 until enemies.size) {
             enemies[i].renderDamageArtifacts(shapeRenderer, unitsPerPixel)
         }
+
+        // Task: Signal pulses rendered here
+        player.renderSignalPulses(shapeRenderer)
+        for (i in 0 until enemies.size) {
+            enemies[i].renderSignalPulses(shapeRenderer)
+        }
         shapeRenderer.end()
 
         batch.begin()
@@ -512,7 +567,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 blueComp = 0f
             } else if (angle < 270) {
                 val t = (angle - 180f) / 90f
-                redComp = 1f - t
+                redComp = t
                 greenComp = 0f
                 blueComp = t
             } else {
@@ -623,11 +678,10 @@ class GameScreen(val game: ShipShipGame) : Screen {
     }
 
     private fun renderRadar() {
-        // Task: Extended radar information area substantially (at least 4 times larger area = 2x radius)
         val radarSize = 250f
         val radarX = uiStage.width - radarSize - 20f
         val radarY = uiStage.height - radarSize - 20f
-        val radarWorldRange = 160f * camera.zoom // Doubled range from 80f to 160f
+        val radarWorldRange = 160f * camera.zoom
         val radarScale = radarSize / radarWorldRange
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line)

@@ -14,8 +14,8 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
     private var state = State.WANDER
 
     private val baseForce = 25f
-    private val sensorRange = 35f
-    private val baseAttackRange = 15f
+    private val sensorRange = 50f
+    private val baseAttackRange = 25f
 
     private var wanderTimer = 0f
     private val wanderDir = Vector2()
@@ -25,6 +25,7 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
     private var dodgeTimer = 0f
     private val dodgeDir = Vector2()
     private var dodgeWobbleTimer = 0f
+    private var nextDodgeTurnTimer = 0f
 
     var onDeath: ((Ship) -> Unit)? = null
 
@@ -68,7 +69,7 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
         if (state != State.DODGE) {
             state = State.DODGE
             dodgeTimer = MathUtils.random(2f, 3f)
-            dodgeDir.set(MathUtils.random(-1f, 1f), MathUtils.random(-1f, 1f)).nor()
+            nextDodgeTurnTimer = 0f
             dodgeWobbleTimer = 0f
         }
     }
@@ -91,7 +92,7 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
             dodgeTimer -= dt
             state = State.DODGE
         } else if (state == State.REPAIR_MODE) {
-            // Repair mode logic handled in updateAI or specialized method
+            // Repair mode logic handled in specialized method below
         } else if (distance < adjustedSensorRange || isAggravated) {
             state = if (needsRepair) State.RETREAT else State.PURSUE
         } else {
@@ -111,8 +112,14 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
                 forceVector.set(wanderDir).scl(baseForce * 0.5f * scale)
             }
             State.DODGE -> {
-                dodgeWobbleTimer += dt * 10f
-                val wobble = MathUtils.sin(dodgeWobbleTimer) * 0.8f
+                nextDodgeTurnTimer -= dt
+                if (nextDodgeTurnTimer <= 0) {
+                    nextDodgeTurnTimer = MathUtils.random(0.5f, 1.0f)
+                    dodgeDir.set(MathUtils.random(-1f, 1f), MathUtils.random(-1f, 1f)).nor()
+                }
+
+                dodgeWobbleTimer += dt * 8f
+                val wobble = MathUtils.sin(dodgeWobbleTimer) * 0.5f
                 val sideDir = dodgeDir.cpy().rotate90(1)
                 forceVector.set(dodgeDir).add(sideDir.scl(wobble)).nor().scl(baseForce * 1.5f * scale)
             }
@@ -126,7 +133,7 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
                 if (distance < weaponRange) fireWeapons(toPlayer, onProjectileCreated, potentialTargets)
             }
             State.RETREAT -> {
-                val repairStation = allies.firstOrNull { it != this && it.health >= it.maxHealth }
+                val repairStation = findNearbyHealthyAlly(allies)
                 if (repairStation != null) {
                     val toStation = repairStation.body.position.cpy().sub(body.position).nor()
                     forceVector.set(toStation).scl(baseForce * 1.2f * scale)
@@ -142,7 +149,7 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
                     forceVector.set(toTarget).scl(baseForce * scale)
                     if (body.position.dst(target.body.position) < (scale + target.scale)) {
                         // Heal 10% every 2 seconds = 5% per second
-                        val healAmt = maxHealth * 0.05f * dt
+                        val healAmt = target.maxHealth * 0.05f * dt
                         target.receiveHeal(healAmt)
                         activeBeams.add(BeamData(body.position.cpy(), target.body.position.cpy(), Color.CYAN, 0.1f, 0.1f, 0.1f * scale))
                     }
@@ -165,5 +172,9 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
             val targetAngle = forceVector.angleRad()
             body.setTransform(body.position, MathUtils.lerpAngle(body.angle, targetAngle, 0.15f))
         }
+    }
+
+    private fun findNearbyHealthyAlly(allies: List<EnemyShip>): EnemyShip? {
+        return allies.firstOrNull { it != this && it.health >= it.maxHealth && it.body.position.dst(body.position) < sensorRange * scale }
     }
 }

@@ -30,7 +30,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     protected var texture: Texture = Texture(pixmap)
     val trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
 
-    // Manage a list of Atmos Venting effects (max 3)
+    // Public for projectile access
     val ventingAtmos = VentingAtmos()
     protected val ventingEffects = mutableListOf<VentingAtmos>()
 
@@ -42,7 +42,15 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     var chargeTime = 0f
     var isCharging = false
-    val shieldRechargeRate = 2f
+
+    // Task: Shield recharges in 5s at level 50, 10s at level 100.
+    // Time = max(5, Level / 10). Rate = maxShield / Time.
+    open val shieldRechargeRate: Float
+        get() {
+            val rechargeTime = Math.max(5.0f, level / 10.0f)
+            return maxShield / rechargeTime
+        }
+
     val shieldDrainRate: Float get() = maxShield / 5.0f
 
     val activeBeams = mutableListOf<BeamData>()
@@ -103,16 +111,29 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             }
         }
 
+        // Velocity Enforcement: Slower when damaged (proportional to health %)
+        val healthPercent = health / maxHealth
+        // Task: Enemy ships 1/2 as fast as base (handled in EnemyShip.init)
+        // Here we apply the damage penalty: speed ranges from 20% to 100% of max
+        val speedPenalty = 0.2f + 0.8f * healthPercent
+        val currentMax = maxSpeed * speedPenalty
+
         val vel = body.linearVelocity
-        if (vel.len2() > maxSpeed * maxSpeed) {
-            body.linearVelocity = vel.nor().scl(maxSpeed)
+        if (vel.len2() > currentMax * currentMax) {
+            body.linearVelocity = vel.nor().scl(currentMax)
         }
 
         val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
         val lengthScale = 1f + progress * 2f
         val shipH = 1.5f * scale * lengthScale
         val rearOffset = Vector2(-shipH * 0.45f, 0f).rotateRad(body.angle)
-        trail.update(dt, body.position.cpy().add(rearOffset))
+
+        // Motion Trail Stutter logic: update only if health allows
+        // Healthy = update every frame. Damaged = skip frames based on health %
+        val stutterChance = healthPercent * 0.8f + 0.2f
+        if (MathUtils.random() < stutterChance) {
+            trail.update(dt, body.position.cpy().add(rearOffset))
+        }
 
         // Idle update for projectile atmos
         ventingAtmos.update(dt, body.position)
@@ -177,6 +198,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             }
         }
 
+        // Signal pulse update
         signalPulseTimer += dt
         if (signalPulseTimer > 1.0f) signalPulseTimer = 0f
     }
@@ -245,7 +267,6 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
         shapeRenderer.setColor(Color.GRAY)
         for (d in activeDebris) {
-            val visualAngle = body.angle - (90f * MathUtils.degreesToRadians)
             val centeredPos = d.localPos.cpy().scl(0.8f)
             val worldPos = body.position.cpy().add(centeredPos.rotateRad(visualAngle))
             val renderSize = d.size * unitsPerPixel
@@ -472,6 +493,12 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 localImpact.y = MathUtils.clamp(localImpact.y, -hullH, hullH)
 
                 damageImpacts.add(DamagePoint(localImpact, Math.max(0.15f, 0.2f * scale), MathUtils.random(100f), MathUtils.random(0.05f, 0.15f)))
+
+                if (ventingEffects.size < 3) {
+                    val atmos = VentingAtmos()
+                    damageImpacts.last().ventingAtmos = atmos
+                    ventingEffects.add(atmos)
+                }
             }
         }
     }

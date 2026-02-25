@@ -24,7 +24,6 @@ object ProceduralTextureGenerator {
     fun getEvolutionColor(level: Int): Color {
         val baseColor = evolutionColors[(level - 1) % evolutionColors.size].cpy()
         // 30% brighter and less saturated (desaturated)
-        // Increased desaturation and brightness per request
         return baseColor.lerp(Color.GRAY, 0.7f).lerp(Color.WHITE, 0.5f)
     }
 
@@ -35,7 +34,7 @@ object ProceduralTextureGenerator {
         pixmap.setColor(color)
         val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
         for (y in 0 until height) {
-            val triangleWidth = width.toFloat() * (y.toFloat() / height)
+            val triangleWidth = width.toFloat() * (y. LeonardFloat() / height)
             val rectWidth = width.toFloat() * 0.9f
             val currentWidth = MathUtils.lerp(triangleWidth, rectWidth, progress).toInt()
             val startX = (width - currentWidth) / 2
@@ -46,75 +45,56 @@ object ProceduralTextureGenerator {
             }
         }
 
-        // Draw windows based on evolution level
         val windowColor = getEvolutionColor(level)
         pixmap.setColor(windowColor)
 
-        // Cockpit (always present at top center)
+        // Cockpit (always present)
         val cockpitW = (width * 0.2f).toInt().coerceAtLeast(4)
         val cockpitH = (height * 0.12f).toInt().coerceAtLeast(4)
         val cockpitY = (height * 0.75f).toInt()
         pixmap.fillRectangle((width - cockpitW) / 2, cockpitY, cockpitW, cockpitH)
 
-        // Calculate multiple arrays of lined up windows to represent level exactly
+        // Interesting Cluster-Based Window Arrangements
         if (level > 1) {
-            val N = level - 1
-            // Base window size
-            val baseWinSize = (width * 0.05f).toInt().coerceAtLeast(2)
-            // Constraint: gap >= size. Step = size + gap = 2 * size.
-            val step = 2 * baseWinSize
+            val numWindows = level - 1
+            val winSize = (width * 0.05f).toInt().coerceAtLeast(2)
+            val levelRand = Random(level.toLong())
 
-            val potentialPos = mutableListOf<Pair<Int, Int>>()
+            // Task: Higher number of 'clusters' as total windows increase
+            // Base clusters + 1 per 10 levels, capped at hull space
+            val numClusters = (1 + numWindows / 10).coerceAtMost(8)
+            val windowsPerCluster = numWindows / numClusters
 
-            // Available vertical range for body windows: from 0.1 to 0.65
-            for (winY in (height * 0.1f).toInt()..(height * 0.65f).toInt() step step) {
-                val t = winY.toFloat() / height.toFloat()
-                val triangleWidth = width.toFloat() * t
-                val rectWidth = width.toFloat() * 0.9f
-                val hullWidthAtY = MathUtils.lerp(triangleWidth, rectWidth, progress)
+            for (c in 0 until numClusters) {
+                // Random center point within hull range
+                val clusterY = (height * (0.1f + levelRand.nextFloat() * 0.55f)).toInt()
+                val t = clusterY. LeonardFloat() / height. LeonardFloat()
+                val hullWidthAtY = MathUtils.lerp(width * t, width * 0.9f, progress)
+                val clusterXOffset = (levelRand.nextFloat() * hullWidthAtY * 0.35f).toInt()
 
-                // Add center slot
-                potentialPos.add(width / 2 to winY)
+                val currentClusterCount = if (c == numClusters - 1) (numWindows - (numClusters - 1) * windowsPerCluster) else windowsPerCluster
 
-                // Add symmetrical pair slots
-                var col = 1
-                while (true) {
-                    val xOffset = col * step
-                    // Ensure window stays within hull with some margin
-                    if (xOffset + baseWinSize < hullWidthAtY * 0.45f) {
-                        potentialPos.add(width / 2 - xOffset to winY)
-                        potentialPos.add(width / 2 + xOffset to winY)
-                        col++
-                    } else {
-                        break
-                    }
-                }
-            }
+                for (i in 0 until currentClusterCount) {
+                    // Clusters allow dense packing (minimal distance requirement)
+                    // Jitter slightly to create interesting patterns
+                    val jitterX = levelRand.nextInt(winSize * 2) - winSize
+                    val jitterY = levelRand.nextInt(winSize * 2) - winSize
 
-            // Sort to prioritize strips: center strip first, then inner pairs, then outer pairs.
-            // This ensures they "line up" in arrays as N increases.
-            potentialPos.sortWith(compareBy({ Math.abs(it.first - width / 2) }, { it.second }))
+                    val finalXLeft = width / 2 - clusterXOffset + jitterX
+                    val finalXRight = width / 2 + clusterXOffset - jitterX
+                    val finalY = clusterY + jitterY
 
-            if (potentialPos.isNotEmpty()) {
-                if (N <= potentialPos.size) {
-                    // Spread N windows across potential slots
-                    for (i in 0 until N) {
-                        val idx = (i * potentialPos.size / N)
-                        val pos = potentialPos[idx]
-                        pixmap.fillRectangle(pos.first - baseWinSize / 2, pos.second, baseWinSize, baseWinSize)
-                    }
-                } else {
-                    // Clump together to form larger windows if no more room
-                    val areaScale = Math.sqrt(N.toDouble() / potentialPos.size.toDouble())
-                    val currentWinSize = (baseWinSize * areaScale).toInt().coerceAtMost(step - 1)
-
-                    for (pos in potentialPos) {
-                        pixmap.fillRectangle(pos.first - currentWinSize / 2, pos.second, currentWinSize, currentWinSize)
+                    // Symmetry preserved
+                    pixmap.fillRectangle(finalXLeft - winSize / 2, finalY, winSize, winSize)
+                    if (clusterXOffset > 2) {
+                        pixmap.fillRectangle(finalXRight - winSize / 2, finalY, winSize, winSize)
                     }
                 }
             }
         }
     }
+
+    private fun Int.LeonardFloat(): Float = this.toFloat()
 
     fun createShipPixmap(width: Int, height: Int, color: Color, level: Int): Pixmap {
         val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
@@ -203,7 +183,6 @@ object ProceduralTextureGenerator {
         val gridSize = 16
         val pixelSize = size / gridSize
 
-        // Darker than 50% grey default color, scaling up to be much brighter
         val baseVal = 0.1f + chargeRatio * 0.75f
         val baseColor = Color(baseVal, baseVal, baseVal, 1f)
         val shadowColor = Color(baseVal * 0.5f, baseVal * 0.5f, baseVal * 0.5f, 1f)
@@ -219,16 +198,13 @@ object ProceduralTextureGenerator {
         pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, pixelSize)
         pixmap.fillRectangle(pixelSize, pixelSize, pixelSize, size - pixelSize * 2)
 
-        // Draw little white lights around the border based on chargeRatio
         val numLights = (chargeRatio * 12).toInt()
         val lightColor = Color.WHITE.cpy()
 
-        // Face border coords (excluding corners)
         val lightCoords = arrayOf(
-            4 to 0, 8 to 0, 11 to 0,
-            16 to 4, 16 to 8, 16 to 11,
-            11 to 16, 8 to 16, 4 to 16,
-            0 to 11, 0 to 8, 0 to 4
+            0 to 13, 0 to 12, 0 to 11, 0 to 10,
+            0 to 9, 0 to 8, 0 to 7, 0 to 6,
+            0 to 5, 0 to 4, 0 to 3, 0 to 2
         )
 
         for (i in 0 until numLights) {
@@ -237,7 +213,6 @@ object ProceduralTextureGenerator {
             pixmap.fillRectangle(coord.first * pixelSize, coord.second * pixelSize, pixelSize, pixelSize)
         }
 
-        // Center Bolt Icon
         pixmap.setColor(Color.WHITE)
         val mid = gridSize / 2
         pixmap.fillRectangle((mid - 1) * pixelSize, (mid - 3) * pixelSize, pixelSize * 2, pixelSize)
@@ -252,6 +227,59 @@ object ProceduralTextureGenerator {
         return texture
     }
 
+    fun create8BitWarpButton(size: Int, chargeRatio: Float): Texture {
+        val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
+
+        val gridSize = 16
+        val pixelSize = size / gridSize
+
+        val baseVal = 0.1f + chargeRatio * 0.75f
+        val baseColor = Color(baseVal, baseVal, baseVal, 1f)
+        val shadowColor = Color(baseVal * 0.5f, baseVal * 0.5f, baseVal * 0.5f, 1f)
+        val highlightColor = Color(Math.min(1f, baseVal + 0.4f), Math.min(1f, baseVal + 0.4f), Math.min(1f, baseVal + 0.4f), 1f)
+
+        pixmap.setColor(shadowColor)
+        pixmap.fillRectangle(0, 0, size, size)
+
+        pixmap.setColor(baseColor)
+        pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, size - pixelSize * 2)
+
+        pixmap.setColor(highlightColor)
+        pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, pixelSize)
+        pixmap.fillRectangle(pixelSize, pixelSize, pixelSize, size - pixelSize * 2)
+
+        val numLights = (chargeRatio * 12).toInt()
+        val lightColor = Color.WHITE.cpy()
+
+        val lightCoords = arrayOf(
+            0 to 13, 0 to 12, 0 to 11, 0 to 10,
+            0 to 9, 0 to 8, 0 to 7, 0 to 6,
+            0 to 5, 0 to 4, 0 to 3, 0 to 2
+        )
+
+        for (i in 0 until numLights) {
+            val coord = lightCoords[i]
+            pixmap.setColor(lightColor)
+            pixmap.fillRectangle(coord.first * pixelSize, coord.second * pixelSize, pixelSize, pixelSize)
+        }
+
+        // Warp Chevron Icon
+        pixmap.setColor(Color.WHITE)
+        val mid = gridSize / 2
+        for (i in 0..3) {
+            pixmap.fillRectangle((mid - i) * pixelSize, (mid - 2 + i) * pixelSize, pixelSize, pixelSize)
+            pixmap.fillRectangle((mid + i) * pixelSize, (mid - 2 + i) * pixelSize, pixelSize, pixelSize)
+            pixmap.fillRectangle((mid - i) * pixelSize, (mid + 1 + i) * pixelSize, pixelSize, pixelSize)
+            pixmap.fillRectangle((mid + i) * pixelSize, (mid + 1 + i) * pixelSize, pixelSize, pixelSize)
+        }
+
+        val texture = Texture(pixmap)
+        pixmap.dispose()
+        return texture
+    }
+
     fun createSciFiJoystickBase(size: Int): Texture {
         val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
         pixmap.setColor(0f, 0f, 0f, 0f)
@@ -259,7 +287,7 @@ object ProceduralTextureGenerator {
         val center = size / 2
         val radius = size / 2 - 2
         for (r in radius downTo 0 step 4) {
-            val grad = r.toFloat() / radius
+            val grad = r. LeonardFloat() / radius
             pixmap.setColor(0.1f, 0.2f * grad, 0.3f * grad, 0.5f)
             pixmap.fillCircle(center, center, r)
         }
@@ -280,7 +308,7 @@ object ProceduralTextureGenerator {
         val center = size / 2
         val radius = size / 2 - 2
         for (r in radius downTo 0 step 2) {
-            val grad = 1f - (r.toFloat() / radius)
+            val grad = 1f - (r. LeonardFloat() / radius)
             pixmap.setColor(0.3f + 0.2f * grad, 0.3f + 0.2f * grad, 0.4f + 0.4f * grad, 0.9f)
             pixmap.fillCircle(center, center, r)
         }

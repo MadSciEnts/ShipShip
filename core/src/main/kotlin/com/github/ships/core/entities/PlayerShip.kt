@@ -13,18 +13,26 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
     private val baseXPThreshold = 100f
     private var pendingEvolution = false
 
+    // Warp mechanics
+    var warpCharge = 0f
+    var isWarping = false
+    private var warpTimer = 0f
+    private val maxWarpDuration = 2.0f
+    private val warpSpeedMultiplier = 5.0f
+
     init {
         level = 1
         updateStats()
         createBody()
-        baseMaxSpeed = 12f
+        baseMaxSpeed = 15f
     }
 
     override fun createBody() {
         val bodyDef = BodyDef().apply {
             type = BodyDef.BodyType.DynamicBody
             position.set(x, y)
-            linearDamping = 1.0f
+            // Task: Maintain momentum much more (lower damping) as size increases
+            linearDamping = 1.0f / scale
             angularDamping = 1.0f
         }
         body = world.createBody(bodyDef)
@@ -44,9 +52,24 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
 
     override fun update(dt: Float) {
         super.update(dt)
+
+        // Task Fix: Warp drive pushes in the direction the ship is facing (even during turns)
+        if (isWarping) {
+            warpTimer -= dt
+            if (warpTimer <= 0) {
+                isWarping = false
+            } else {
+                // Facing vector: 0 radians is Right (X+), so forward is cos/sin
+                val forward = Vector2(MathUtils.cos(body.angle), MathUtils.sin(body.angle))
+                val warpVel = forward.scl(maxSpeed * warpSpeedMultiplier)
+                body.linearVelocity = warpVel
+            }
+        }
     }
 
     fun applyInput(moveX: Float, moveY: Float, dt: Float) {
+        if (isWarping) return // Lock normal movement during warp
+
         val forceMultiplier = 30f * scale
         val force = Vector2(moveX, moveY).scl(forceMultiplier)
         body.applyForceToCenter(force, true)
@@ -54,19 +77,23 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
         if (force.len2() > 0.01f) {
             val targetAngle = force.angleRad()
 
-            // Slow down rotation as level increases
-            // Base lerp factor 0.15f, reduced as level grows
-            val rotationSpeedFactor = 1.0f / (1.0f + (level - 1) * 0.05f)
+            // Task: Turn slower as level increases (more mass/inertia)
+            val rotationSpeedFactor = 1.0f / (1.0f + (level - 1) * 0.15f)
             val lerpFactor = 0.15f * rotationSpeedFactor
 
             var currentAngle = body.angle
-            // Normalize angle using MathUtils constants
             while (currentAngle < -MathUtils.PI) currentAngle += MathUtils.PI * 2f
             while (currentAngle > MathUtils.PI) currentAngle -= MathUtils.PI * 2f
 
             val newAngle = MathUtils.lerpAngle(currentAngle, targetAngle, lerpFactor)
             body.setTransform(body.position, newAngle)
         }
+    }
+
+    fun activateWarp(chargeRatio: Float) {
+        if (chargeRatio < 0.1f) return
+        isWarping = true
+        warpTimer = chargeRatio * maxWarpDuration
     }
 
     fun addExperience(amount: Float) {
@@ -105,13 +132,18 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
         maxShield = level * 10f
         health = maxHealth
         shield = maxShield
+
+        // Task: Overall increase in max speed as ships evolve
+        // Level 1: 1.0x, Level 10: ~1.1x, Level 100: 2.0x
+        val speedMultiplier = 1.0f + (level - 1) / 99.0f
+        baseMaxSpeed = 12f * speedMultiplier
     }
 
     fun checkEvolution(): Boolean {
         val evolve = pendingEvolution
         if (pendingEvolution) {
             updateFixtureScale()
-            evolveShip() // Procedural texture redraw
+            evolveShip()
             pendingEvolution = false
         }
         return evolve
@@ -130,5 +162,8 @@ class PlayerShip(world: World, x: Float, y: Float) : Ship(world, x, y, Color.GRA
         shape.radius = 0.6f * scale
         body.createFixture(shape, 1f)
         shape.dispose()
+
+        // Update damping based on new scale: larger = maintains momentum more
+        body.linearDamping = 1.0f / scale
     }
 }

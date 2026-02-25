@@ -17,9 +17,12 @@ import java.util.*
  * to black or muddy browns.
  *
  * THE FIX:
- * 1. Generate textures in pure WHITE.
+ * 1. Generate textures in pure WHITE (0xFFFFFFFF).
  * 2. Use batch.setColor(targetColor) before drawing to apply the intended hue.
  * 3. Always reset batch.setColor(Color.WHITE) after the draw call.
+ * 4. To ensure textures are MANAGED (don't turn white/black on context loss),
+ *    do not dispose the Pixmap if it's passed to the Texture constructor,
+ *    or use a specialized TextureData.
  */
 object ProceduralTextureGenerator {
     private val random = Random()
@@ -34,7 +37,7 @@ object ProceduralTextureGenerator {
         pixmap.setColor(color)
         val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
         for (y in 0 until height) {
-            val triangleWidth = width.toFloat() * (y. LeonardFloat() / height)
+            val triangleWidth = width.toFloat() * (y.toFloat() / height)
             val rectWidth = width.toFloat() * 0.9f
             val currentWidth = MathUtils.lerp(triangleWidth, rectWidth, progress).toInt()
             val startX = (width - currentWidth) / 2

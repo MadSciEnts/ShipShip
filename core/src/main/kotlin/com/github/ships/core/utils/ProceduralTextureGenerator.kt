@@ -7,6 +7,20 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion
 import com.badlogic.gdx.math.MathUtils
 import java.util.*
 
+/**
+ * NOTE FOR FUTURE AGENTS / SELF:
+ * All textures generated here for projectiles, crystals, and UI elements MUST BE WHITE/GRAYSCALE.
+ *
+ * THE "BLACK BOX" BUG:
+ * Baking specific colors into these textures and then tinting them again in the render loop
+ * causes "Color Multiplication" (Color * Color). On many mobile GPUs, this math collapses
+ * to black or muddy browns.
+ *
+ * THE FIX:
+ * 1. Generate textures in pure WHITE.
+ * 2. Use batch.setColor(targetColor) before drawing to apply the intended hue.
+ * 3. Always reset batch.setColor(Color.WHITE) after the draw call.
+ */
 object ProceduralTextureGenerator {
     private val random = Random()
     private var whitePixel: TextureRegion? = null
@@ -20,7 +34,7 @@ object ProceduralTextureGenerator {
         pixmap.setColor(color)
         val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
         for (y in 0 until height) {
-            val triangleWidth = width.toFloat() * (y.toFloat() / height)
+            val triangleWidth = width.toFloat() * (y. LeonardFloat() / height)
             val rectWidth = width.toFloat() * 0.9f
             val currentWidth = MathUtils.lerp(triangleWidth, rectWidth, progress).toInt()
             val startX = (width - currentWidth) / 2
@@ -49,7 +63,8 @@ object ProceduralTextureGenerator {
             val pixmap = Pixmap(1, 1, Pixmap.Format.RGBA8888)
             pixmap.setColor(Color.WHITE)
             pixmap.fill()
-            whitePixel = TextureRegion(Texture(pixmap))
+            val texture = Texture(pixmap)
+            whitePixel = TextureRegion(texture)
         }
         return whitePixel!!
     }
@@ -70,11 +85,8 @@ object ProceduralTextureGenerator {
         val key = "rect_${width}_$height"
         return textureCache.getOrPut(key) {
             val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
-            //pixmap.setColor(1f, 1f, 1f, 1f)
-            //pixmap.fill()
-
-            // NOTE FOR FUTURE SELF: This MUST be pure white for real-time tinting to work!
-            // Baking colors here causes "Black Box" artifacts due to color multiplication.
+            pixmap.setColor(0f, 0f, 0f, 0f)
+            pixmap.fill()
             pixmap.setColor(Color.WHITE)
             pixmap.fill()
             Texture(pixmap)
@@ -89,7 +101,6 @@ object ProceduralTextureGenerator {
         val gridSize = 16
         val pixelSize = size / gridSize
 
-        // Use grayscale base for real-time saturation/tinting
         val baseColor = if (down) Color(0.4f, 0.4f, 0.4f, 1f) else Color(0.7f, 0.7f, 0.7f, 1f)
         val shadowColor = if (down) Color(0.2f, 0.2f, 0.2f, 1f) else Color(0.3f, 0.3f, 0.3f, 1f)
         val highlightColor = if (down) Color(0.6f, 0.6f, 0.6f, 1f) else Color(0.9f, 0.9f, 0.9f, 1f)
@@ -134,9 +145,7 @@ object ProceduralTextureGenerator {
         pixmap.drawCircle(center, center, radius - 4)
         pixmap.drawLine(center - 20, center, center + 20, center)
         pixmap.drawLine(center, center - 20, center, center + 20)
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return texture
+        return Texture(pixmap)
     }
 
     fun createSciFiJoystickKnob(size: Int): Texture {
@@ -152,9 +161,7 @@ object ProceduralTextureGenerator {
         }
         pixmap.setColor(0.6f, 0.8f, 1f, 1f)
         pixmap.drawCircle(center, center, radius)
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return texture
+        return Texture(pixmap)
     }
 
     fun createSciFiButton(width: Int, height: Int, down: Boolean): Texture {
@@ -167,8 +174,6 @@ object ProceduralTextureGenerator {
         pixmap.setColor(0.4f, 0.7f, 1f, 0.9f)
         pixmap.drawRectangle(0, 0, width, height)
         pixmap.drawRectangle(4, 4, width - 8, height - 8)
-        val texture = Texture(pixmap)
-        pixmap.dispose()
-        return texture
+        return Texture(pixmap)
     }
 }

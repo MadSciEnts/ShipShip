@@ -138,6 +138,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         fireStyle.down = TextureRegionDrawable(ProceduralTextureGenerator.create8BitAttackButton(250, true))
 
         fireButton = ImageButton(fireStyle)
+        fireButton.setColor(Color.RED) // Tint attack button RED
         fireButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isFiring = true
@@ -154,6 +155,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         chargeStyle.down = fireStyle.down
 
         chargeButton = ImageButton(chargeStyle)
+        chargeButton.setColor(Color.GRAY) // Start GREY
         chargeButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isCharging = true
@@ -264,10 +266,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
         player.checkEvolution()
 
         if (!world.isLocked) {
-            val bodyIter = bodiesToRemove.iterator()
-            while(bodyIter.hasNext()) {
-                world.destroyBody(bodyIter.next())
-                bodyIter.remove()
+            for (i in (bodiesToRemove.size - 1) downTo 0) {
+                world.destroyBody(bodiesToRemove[i])
+                bodiesToRemove.removeIndex(i)
             }
 
             for (spawn in enemiesToSpawn) {
@@ -296,9 +297,10 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         if (isCharging) {
             val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
-            chargeButton.color = Color(1f, 1f - chargeRatio, 1f - chargeRatio, 1f).lerp(Color.CYAN, chargeRatio)
+            // Pulse bright blue
+            chargeButton.color = Color.GRAY.cpy().lerp(Color.CYAN, chargeRatio)
         } else {
-            chargeButton.color = Color.WHITE
+            chargeButton.color = Color.GRAY
         }
 
         val potentialTargets = Array<Ship>()
@@ -316,12 +318,13 @@ class GameScreen(val game: ShipShipGame) : Screen {
             player.fireWeapons(fireDir, { projectiles.add(it) }, potentialTargets.toList())
         }
 
+        // FIXED: Indexed loop to avoid iterator crash and shared texture disposal
         for (i in (projectiles.size - 1) downTo 0) {
             val p = projectiles[i]
             p.update(delta, camera.position, camera.zoom, viewport.worldWidth, viewport.worldHeight)
             if (!p.active) {
                 bodiesToRemove.add(p.body)
-                // STABILITY FIX: DO NOT DISPOSE p.texture HERE as it is a shared cached resource!
+                // DO NOT dispose p.texture here as it's shared from cache
                 projectiles.removeIndex(i)
             }
         }
@@ -456,7 +459,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 blueComp = 0f
             } else if (angle < 270) {
                 val t = (angle - 180f) / 90f
-                redComp = 1f - t
+                redComp = t
                 greenComp = 0f
                 blueComp = t
             } else {
@@ -514,8 +517,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 val toEnemy = Vector2(ex - camera.position.x, ey - camera.position.y)
                 val dist = toEnemy.len()
                 val dir = toEnemy.nor()
-
-                // Fixed: Scaling arrows based on distance
                 val cameraThreshold = Math.max(visibleW, visibleH) / 2f
                 val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.3f, 1.0f)
 

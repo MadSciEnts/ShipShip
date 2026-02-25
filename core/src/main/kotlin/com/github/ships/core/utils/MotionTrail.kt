@@ -13,7 +13,7 @@ class TrailPoint(val pos: Vector2 = Vector2(), var life: Float = 0f, var offset:
 class MotionTrail(var color: Color) {
     private val points = Array<TrailPoint>()
     private val maxLife = 4.0f
-    private val minDistance = 0.2f
+    private val minDistance = 0.15f
 
     private val pointPool = object : Pool<TrailPoint>() {
         override fun newObject(): TrailPoint = TrailPoint()
@@ -38,10 +38,10 @@ class MotionTrail(var color: Color) {
                 pointPool.free(p)
             } else {
                 val ageRatio = 1f - (p.life / maxLife)
-                val turbulence = ageRatio * 0.5f
+                val turbulence = ageRatio * 0.75f
                 p.offset.add(
-                    MathUtils.random(-turbulence, turbulence) * dt * 10f,
-                    MathUtils.random(-turbulence, turbulence) * dt * 10f
+                    MathUtils.random(-turbulence, turbulence) * dt * 5f,
+                    MathUtils.random(-turbulence, turbulence) * dt * 5f
                 )
             }
         }
@@ -62,9 +62,9 @@ class MotionTrail(var color: Color) {
             renderColor.a = easedAlpha
 
             // Fixed: Reduced start width and increased growth to 4x in all axes
-            // Base width is now thinner (0.15f), growing to 0.6f (4x)
-            val growFactor = 1.0f + (1.0f - easedAlpha) * 3.0f
-            val width = 0.15f * shipScale * growFactor
+            // Base width is now thinner (0.05f), growing to 0.6f (4x)
+            val growFactor = 1.5f + (1.0f - easedAlpha) * 24.0f
+            val width = 0.02f * shipScale * growFactor
 
             shapeRenderer.setColor(renderColor)
             shapeRenderer.rectLine(

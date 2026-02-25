@@ -25,7 +25,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     lateinit var body: Body
     protected var pixmap: Pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, 1)
     protected var texture: Texture = Texture(64, 64, Pixmap.Format.RGBA8888)
-    val trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
+    val trail = MotionTrail(if (this is PlayerShip) Color(0.2f, 0.5f, 0.7f, 0.8f) else Color(1f, 0.2f, 0.2f, 1f))
 
     var scale: Float = 1.0f
     var baseMaxSpeed: Float = 6f
@@ -104,7 +104,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         }
 
         candleFlickerTimer += dt
-        if (candleFlickerTimer >= 0.1f) {
+        if (candleFlickerTimer >= 0.2f) {
             candleFlickerTimer = 0f
             currentFlickerColor = when(MathUtils.random(2)) {
                 0 -> Color.RED

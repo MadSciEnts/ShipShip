@@ -7,28 +7,26 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion
 import com.badlogic.gdx.math.MathUtils
 import java.util.*
 
-/**
- * NOTE FOR FUTURE AGENTS / SELF:
- * All textures generated here for projectiles, crystals, and UI elements MUST BE WHITE/GRAYSCALE.
- *
- * THE "BLACK BOX" BUG:
- * Baking specific colors into these textures and then tinting them again in the render loop
- * causes "Color Multiplication" (Color * Color). On many mobile GPUs, this math collapses
- * to black or muddy browns.
- *
- * THE FIX:
- * 1. Generate textures in pure WHITE (0xFFFFFFFF).
- * 2. Use batch.setColor(targetColor) before drawing to apply the intended hue.
- * 3. Always reset batch.setColor(Color.WHITE) after the draw call.
- * 4. To ensure textures are MANAGED (don't turn white/black on context loss),
- *    do not dispose the Pixmap if it's passed to the Texture constructor,
- *    or use a specialized TextureData.
- */
 object ProceduralTextureGenerator {
     private val random = Random()
     private var whitePixel: TextureRegion? = null
 
     private val textureCache = mutableMapOf<String, Texture>()
+
+    private val evolutionColors = arrayOf(
+        Color(0.0f, 1.0f, 1.0f, 1f),
+        Color(1.0f, 1.0f, 0.0f, 1f),
+        Color(1.0f, 0.0f, 0.0f, 1f),
+        Color(0.0f, 1.0f, 0.0f, 1f),
+        Color(1.0f, 1.0f, 1.0f, 1f)
+    )
+
+    fun getEvolutionColor(level: Int): Color {
+        val baseColor = evolutionColors[(level - 1) % evolutionColors.size].cpy()
+        // 30% brighter and less saturated (desaturated)
+        // Increased desaturation and brightness per request
+        return baseColor.lerp(Color.GRAY, 0.7f).lerp(Color.WHITE, 0.5f)
+    }
 
     fun drawShipToPixmap(pixmap: Pixmap, color: Color, level: Int) {
         val width = pixmap.width
@@ -47,10 +45,75 @@ object ProceduralTextureGenerator {
                 }
             }
         }
-        pixmap.setColor(Color.SKY)
-        val cockpitW = (width * 0.2f).toInt()
-        val cockpitH = (height * 0.15f).toInt()
-        pixmap.fillRectangle((width - cockpitW) / 2, (height * 0.7f).toInt(), cockpitW, cockpitH)
+
+        // Draw windows based on evolution level
+        val windowColor = getEvolutionColor(level)
+        pixmap.setColor(windowColor)
+
+        // Cockpit (always present at top center)
+        val cockpitW = (width * 0.2f).toInt().coerceAtLeast(4)
+        val cockpitH = (height * 0.12f).toInt().coerceAtLeast(4)
+        val cockpitY = (height * 0.75f).toInt()
+        pixmap.fillRectangle((width - cockpitW) / 2, cockpitY, cockpitW, cockpitH)
+
+        // Calculate multiple arrays of lined up windows to represent level exactly
+        if (level > 1) {
+            val N = level - 1
+            // Base window size
+            val baseWinSize = (width * 0.05f).toInt().coerceAtLeast(2)
+            // Constraint: gap >= size. Step = size + gap = 2 * size.
+            val step = 2 * baseWinSize
+
+            val potentialPos = mutableListOf<Pair<Int, Int>>()
+
+            // Available vertical range for body windows: from 0.1 to 0.65
+            for (winY in (height * 0.1f).toInt()..(height * 0.65f).toInt() step step) {
+                val t = winY.toFloat() / height.toFloat()
+                val triangleWidth = width.toFloat() * t
+                val rectWidth = width.toFloat() * 0.9f
+                val hullWidthAtY = MathUtils.lerp(triangleWidth, rectWidth, progress)
+
+                // Add center slot
+                potentialPos.add(width / 2 to winY)
+
+                // Add symmetrical pair slots
+                var col = 1
+                while (true) {
+                    val xOffset = col * step
+                    // Ensure window stays within hull with some margin
+                    if (xOffset + baseWinSize < hullWidthAtY * 0.45f) {
+                        potentialPos.add(width / 2 - xOffset to winY)
+                        potentialPos.add(width / 2 + xOffset to winY)
+                        col++
+                    } else {
+                        break
+                    }
+                }
+            }
+
+            // Sort to prioritize strips: center strip first, then inner pairs, then outer pairs.
+            // This ensures they "line up" in arrays as N increases.
+            potentialPos.sortWith(compareBy({ Math.abs(it.first - width / 2) }, { it.second }))
+
+            if (potentialPos.isNotEmpty()) {
+                if (N <= potentialPos.size) {
+                    // Spread N windows across potential slots
+                    for (i in 0 until N) {
+                        val idx = (i * potentialPos.size / N)
+                        val pos = potentialPos[idx]
+                        pixmap.fillRectangle(pos.first - baseWinSize / 2, pos.second, baseWinSize, baseWinSize)
+                    }
+                } else {
+                    // Clump together to form larger windows if no more room
+                    val areaScale = Math.sqrt(N.toDouble() / potentialPos.size.toDouble())
+                    val currentWinSize = (baseWinSize * areaScale).toInt().coerceAtMost(step - 1)
+
+                    for (pos in potentialPos) {
+                        pixmap.fillRectangle(pos.first - currentWinSize / 2, pos.second, currentWinSize, currentWinSize)
+                    }
+                }
+            }
+        }
     }
 
     fun createShipPixmap(width: Int, height: Int, color: Color, level: Int): Pixmap {
@@ -132,6 +195,63 @@ object ProceduralTextureGenerator {
         return texture
     }
 
+    fun create8BitChargeButton(size: Int, chargeRatio: Float): Texture {
+        val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
+
+        val gridSize = 16
+        val pixelSize = size / gridSize
+
+        // Darker than 50% grey default color, scaling up to be much brighter
+        val baseVal = 0.1f + chargeRatio * 0.75f
+        val baseColor = Color(baseVal, baseVal, baseVal, 1f)
+        val shadowColor = Color(baseVal * 0.5f, baseVal * 0.5f, baseVal * 0.5f, 1f)
+        val highlightColor = Color(Math.min(1f, baseVal + 0.4f), Math.min(1f, baseVal + 0.4f), Math.min(1f, baseVal + 0.4f), 1f)
+
+        pixmap.setColor(shadowColor)
+        pixmap.fillRectangle(0, 0, size, size)
+
+        pixmap.setColor(baseColor)
+        pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, size - pixelSize * 2)
+
+        pixmap.setColor(highlightColor)
+        pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, pixelSize)
+        pixmap.fillRectangle(pixelSize, pixelSize, pixelSize, size - pixelSize * 2)
+
+        // Draw little white lights around the border based on chargeRatio
+        val numLights = (chargeRatio * 12).toInt()
+        val lightColor = Color.WHITE.cpy()
+
+        // Face border coords (excluding corners)
+        val lightCoords = arrayOf(
+            4 to 0, 8 to 0, 11 to 0,
+            16 to 4, 16 to 8, 16 to 11,
+            11 to 16, 8 to 16, 4 to 16,
+            0 to 11, 0 to 8, 0 to 4
+        )
+
+        for (i in 0 until numLights) {
+            val coord = lightCoords[i]
+            pixmap.setColor(lightColor)
+            pixmap.fillRectangle(coord.first * pixelSize, coord.second * pixelSize, pixelSize, pixelSize)
+        }
+
+        // Center Bolt Icon
+        pixmap.setColor(Color.WHITE)
+        val mid = gridSize / 2
+        pixmap.fillRectangle((mid - 1) * pixelSize, (mid - 3) * pixelSize, pixelSize * 2, pixelSize)
+        pixmap.fillRectangle((mid - 2) * pixelSize, (mid - 2) * pixelSize, pixelSize * 2, pixelSize)
+        pixmap.fillRectangle((mid - 3) * pixelSize, (mid - 1) * pixelSize, pixelSize * 4, pixelSize)
+        pixmap.fillRectangle((mid - 1) * pixelSize, mid * pixelSize, pixelSize * 4, pixelSize)
+        pixmap.fillRectangle(mid * pixelSize, (mid + 1) * pixelSize, pixelSize * 2, pixelSize)
+        pixmap.fillRectangle((mid + 1) * pixelSize, (mid + 2) * pixelSize, pixelSize * 2, pixelSize)
+
+        val texture = Texture(pixmap)
+        pixmap.dispose()
+        return texture
+    }
+
     fun createSciFiJoystickBase(size: Int): Texture {
         val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
         pixmap.setColor(0f, 0f, 0f, 0f)
@@ -148,7 +268,9 @@ object ProceduralTextureGenerator {
         pixmap.drawCircle(center, center, radius - 4)
         pixmap.drawLine(center - 20, center, center + 20, center)
         pixmap.drawLine(center, center - 20, center, center + 20)
-        return Texture(pixmap)
+        val texture = Texture(pixmap)
+        pixmap.dispose()
+        return texture
     }
 
     fun createSciFiJoystickKnob(size: Int): Texture {
@@ -164,7 +286,9 @@ object ProceduralTextureGenerator {
         }
         pixmap.setColor(0.6f, 0.8f, 1f, 1f)
         pixmap.drawCircle(center, center, radius)
-        return Texture(pixmap)
+        val texture = Texture(pixmap)
+        pixmap.dispose()
+        return texture
     }
 
     fun createSciFiButton(width: Int, height: Int, down: Boolean): Texture {
@@ -177,6 +301,8 @@ object ProceduralTextureGenerator {
         pixmap.setColor(0.4f, 0.7f, 1f, 0.9f)
         pixmap.drawRectangle(0, 0, width, height)
         pixmap.drawRectangle(4, 4, width - 8, height - 8)
-        return Texture(pixmap)
+        val texture = Texture(pixmap)
+        pixmap.dispose()
+        return texture
     }
 }

@@ -1,5 +1,6 @@
 package com.github.ships.core.entities
 
+import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.graphics.Color
 import com.badlogic.gdx.graphics.Pixmap
 import com.badlogic.gdx.graphics.Texture
@@ -11,6 +12,7 @@ import com.badlogic.gdx.physics.box2d.Body
 import com.badlogic.gdx.physics.box2d.World
 import com.github.ships.core.utils.MotionTrail
 import com.github.ships.core.utils.ProceduralTextureGenerator
+import com.github.ships.core.utils.VentingAtmos
 import com.github.ships.core.weapons.ProjectileWeapon
 import com.github.ships.core.weapons.Rarity
 import com.github.ships.core.weapons.Weapon
@@ -28,6 +30,10 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     protected var texture: Texture = Texture(pixmap)
     val trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
 
+    // Manage a list of Atmos Venting effects (max 3)
+    val ventingAtmos = VentingAtmos()
+    protected val ventingEffects = mutableListOf<VentingAtmos>()
+
     var scale: Float = 1.0f
     var baseMaxSpeed: Float = 6f
 
@@ -39,13 +45,23 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     val shieldRechargeRate = 2f
     val shieldDrainRate: Float get() = maxShield / 5.0f
 
-    protected val activeBeams = mutableListOf<BeamData>()
+    val activeBeams = mutableListOf<BeamData>()
     protected var candleFlickerTimer = 0f
     protected var currentFlickerColor = Color.RED
 
-    protected val damageImpacts = mutableListOf<Vector2>()
+    // Pulse logic for signaling
+    protected var signalPulseTimer = 0f
+    var isSignalingRepair = false
+    var isRepairingAlly = false
 
-    protected class BeamData(val start: Vector2, val end: Vector2, val color: Color, var life: Float, var maxLife: Float, val baseWidth: Float)
+    protected class DamagePoint(val localPos: Vector2, val baseSize: Float, val timerOffset: Float, val popInterval: Float, var ventingAtmos: VentingAtmos? = null)
+    protected val damageImpacts = mutableListOf<DamagePoint>()
+
+    protected class DebrisParticle(var localPos: Vector2, val velocity: Vector2, var life: Float, val size: Float)
+    protected val activeDebris = mutableListOf<DebrisParticle>()
+    protected var debrisTimer = 0f
+
+    class BeamData(val start: Vector2, val end: Vector2, val color: Color, var life: Float, var maxLife: Float, val baseWidth: Float)
 
     open val maxSpeed: Float
         get() = baseMaxSpeed * scale
@@ -61,8 +77,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
 
     open fun update(dt: Float) {
         maxPorts = 1 + (level - 1) / 5
-        // Step 2: Slow down enemy rate of fire (from 0.5s to 1.0s)
-        val baseCooldown = if (this is PlayerShip) 0.4f else 1.0f
+        val baseCooldown = if (this is PlayerShip) 0.4f else 1.2f
 
         while (weaponPorts.size < maxPorts) {
             weaponPorts.add(ProjectileWeapon(Rarity.COMMON, baseCooldown))
@@ -71,7 +86,9 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             weaponPorts.removeAt(weaponPorts.size - 1)
         }
 
-        weaponPorts.forEach { it.update(dt) }
+        for (i in 0 until weaponPorts.size) {
+            weaponPorts[i].update(dt)
+        }
 
         if (shipFireTimer > 0) shipFireTimer -= dt
 
@@ -87,9 +104,8 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         }
 
         val vel = body.linearVelocity
-        val currentMax = maxSpeed
-        if (vel.len2() > currentMax * currentMax) {
-            body.linearVelocity = vel.nor().scl(currentMax)
+        if (vel.len2() > maxSpeed * maxSpeed) {
+            body.linearVelocity = vel.nor().scl(maxSpeed)
         }
 
         val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
@@ -98,6 +114,30 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         val rearOffset = Vector2(-shipH * 0.45f, 0f).rotateRad(body.angle)
         trail.update(dt, body.position.cpy().add(rearOffset))
 
+        // Idle update for projectile atmos
+        ventingAtmos.update(dt, body.position)
+
+        // Update individual Venting Atmosphere effects from damage
+        val visualAngle = body.angle - (90f * MathUtils.degreesToRadians)
+        val vIter = ventingEffects.iterator()
+        while(vIter.hasNext()) {
+            if (vIter.next().isFinished()) vIter.remove()
+        }
+
+        for (impact in damageImpacts) {
+            val vAtmos = impact.ventingAtmos
+            if (vAtmos != null) {
+                val centeredPos = impact.localPos.cpy().scl(0.8f)
+                val worldImpactPos = body.position.cpy().add(centeredPos.rotateRad(visualAngle))
+                val ventDir = centeredPos.cpy().rotateRad(visualAngle).nor()
+                val ventVelocity = ventDir.scl(5f)
+                vAtmos.update(dt, worldImpactPos, ventVelocity)
+                if (vAtmos.isFinished()) {
+                    impact.ventingAtmos = null
+                }
+            }
+        }
+
         val iter = activeBeams.iterator()
         while (iter.hasNext()) {
             val b = iter.next()
@@ -105,14 +145,57 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             if (b.life <= 0) iter.remove()
         }
 
+        if (damageImpacts.isNotEmpty()) {
+            debrisTimer += dt
+            if (debrisTimer >= 0.6f) { // ~1.6 per second
+                debrisTimer = 0f
+                val point = damageImpacts[MathUtils.random(damageImpacts.size - 1)]
+                activeDebris.add(DebrisParticle(
+                    point.localPos.cpy(),
+                    Vector2(MathUtils.random(-0.5f, 0.5f), MathUtils.random(-0.5f, 0.5f)),
+                    MathUtils.random(1f, 3f),
+                    MathUtils.random(2f, 5f)
+                ))
+            }
+        }
+
+        val dIter = activeDebris.iterator()
+        while (dIter.hasNext()) {
+            val d = dIter.next()
+            d.life -= dt
+            d.localPos.add(d.velocity.x * dt, d.velocity.y * dt)
+            if (d.life <= 0) dIter.remove()
+        }
+
         candleFlickerTimer += dt
-        // Step 1: Increase damage flicker rate to 0.1s
-        if (candleFlickerTimer >= 0.05f) {
+        if (candleFlickerTimer >= 0.1f) {
             candleFlickerTimer = 0f
             currentFlickerColor = when(MathUtils.random(2)) {
                 0 -> Color.RED
-                1 -> Color(0.8f, 0.8f, 0f, 0.8f)
-                else -> Color(0.8f, 0.5f, 0.2f, 1f)
+                1 -> Color(0.8f, 0.8f, 0f, 0.8f) // Yellow
+                else -> Color(0.8f, 0.5f, 0.2f, 1f) // Molten Orange
+            }
+        }
+
+        signalPulseTimer += dt
+        if (signalPulseTimer > 1.0f) signalPulseTimer = 0f
+    }
+
+    fun receiveHeal(amount: Float) {
+        val oldHealth = health
+        health = MathUtils.clamp(health + amount, 0f, maxHealth)
+        val healPercent = (health - oldHealth) / maxHealth
+
+        if (healPercent > 0 && damageImpacts.isNotEmpty()) {
+            val numToRemove = MathUtils.ceil(damageImpacts.size * healPercent)
+            for (i in 0 until numToRemove) {
+                if (damageImpacts.isNotEmpty()) damageImpacts.removeAt(0)
+            }
+        }
+        if (healPercent > 0 && activeDebris.isNotEmpty()) {
+            val numToRemove = MathUtils.ceil(activeDebris.size * healPercent)
+            for (i in 0 until numToRemove) {
+                if (activeDebris.isNotEmpty()) activeDebris.removeAt(0)
             }
         }
     }
@@ -135,20 +218,38 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         renderWeaponPods(batch, width, height, angleDeg)
     }
 
-    fun renderDamageArtifacts(shapeRenderer: ShapeRenderer) {
-        if (damageImpacts.isEmpty()) return
+    fun renderDamageArtifacts(shapeRenderer: ShapeRenderer, unitsPerPixel: Float) {
+        if (damageImpacts.isEmpty() && activeDebris.isEmpty()) return
 
-        val flickerColor = currentFlickerColor.cpy()
-        shapeRenderer.setColor(flickerColor)
+        val stateTime = Gdx.graphics.frameId * 0.016f
+        val visualAngle = body.angle - (90f * MathUtils.degreesToRadians)
 
         for (impact in damageImpacts) {
-            // Damage artifacts "climb" slightly closer to camera (0.1 units)
-            // But in 2D we just draw them after.
-            // We rotate them with the ship
-            val worldPos = body.position.cpy().add(impact.cpy().rotateRad(body.angle))
-            val size = 0.15f * scale
-            shapeRenderer.rect(worldPos.x - size/2, worldPos.y - size/2,
-                size/2, size/2, size, size, 1f, 1f, body.angle * MathUtils.radiansToDegrees)
+            val time = (stateTime + impact.timerOffset)
+            val progress = (time % impact.popInterval) / impact.popInterval
+            val dynamicScale = 0.25f + progress * 0.75f
+            val currentSize = impact.baseSize * dynamicScale
+
+            val centeredPos = impact.localPos.cpy().scl(0.8f)
+            val worldPos = body.position.cpy().add(centeredPos.rotateRad(visualAngle))
+
+            val flickerColor = if (progress < 0.5f) {
+                Color.WHITE.cpy().lerp(Color.YELLOW, progress * 2f)
+            } else {
+                Color.YELLOW.cpy().lerp(Color.RED, (progress - 0.5f) * 2f)
+            }
+
+            shapeRenderer.setColor(flickerColor)
+            shapeRenderer.circle(worldPos.x, worldPos.y, currentSize, 8)
+        }
+
+        shapeRenderer.setColor(Color.GRAY)
+        for (d in activeDebris) {
+            val visualAngle = body.angle - (90f * MathUtils.degreesToRadians)
+            val centeredPos = d.localPos.cpy().scl(0.8f)
+            val worldPos = body.position.cpy().add(centeredPos.rotateRad(visualAngle))
+            val renderSize = d.size * unitsPerPixel
+            shapeRenderer.rect(worldPos.x - renderSize/2, worldPos.y - renderSize/2, renderSize, renderSize)
         }
     }
 
@@ -162,6 +263,25 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             shapeRenderer.rectLine(beam.start.x, beam.start.y, beam.end.x, beam.end.y, dynamicWidth)
             shapeRenderer.setColor(Color.WHITE.r, Color.WHITE.g, Color.WHITE.b, alpha)
             shapeRenderer.rectLine(beam.start.x, beam.start.y, beam.end.x, beam.end.y, dynamicWidth * 0.3f)
+        }
+    }
+
+    fun renderSignalPulses(shapeRenderer: ShapeRenderer) {
+        if (!isSignalingRepair && !isRepairingAlly) return
+
+        val pos = body.position
+        val baseRadius = 2.0f * scale
+        val pulseRadius = baseRadius + (signalPulseTimer * 3.0f * scale)
+        val alpha = 1.0f - signalPulseTimer
+
+        if (isSignalingRepair) {
+            shapeRenderer.setColor(1f, 0f, 0f, alpha * 0.6f)
+            shapeRenderer.circle(pos.x, pos.y, pulseRadius, 30)
+        }
+
+        if (isRepairingAlly) {
+            shapeRenderer.setColor(0f, 0.6f, 1f, alpha * 0.6f)
+            shapeRenderer.circle(pos.x, pos.y, pulseRadius, 30)
         }
     }
 
@@ -196,6 +316,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             val podPos = getPodWorldPosition(i, shipW, shipH, body.angle)
             val podScale = 1.0f + chargeRatio * 1.0f
             val podW = 0.25f * scale * podScale
+            val podW_final = podW
             val podH = 0.4f * scale * podScale
             val rx = MathUtils.random(-0.05f, 0.05f) * scale * chargeRatio
             val ry = MathUtils.random(-0.05f, 0.05f) * scale * chargeRatio
@@ -203,15 +324,18 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             val targetColor = Color().fromHsv(levelHue, 0.8f, 1f)
             val basePodColor = Color.GRAY.cpy().lerp(targetColor, chargeRatio)
             batch.setColor(basePodColor)
-            batch.draw(white, podPos.x - podW/2 + rx, podPos.y - podH/2 + ry, podW/2, podH/2, podW, podH, 1f, 1f, angleDeg)
+            batch.draw(white, podPos.x - podW_final/2 + rx, podPos.y - podH/2 + ry, podW_final/2, podH/2, podW_final, podH, 1f, 1f, angleDeg)
             batch.setColor(if (chargeRatio > 0.1f) Color.WHITE else Color.LIGHT_GRAY)
-            batch.draw(white, podPos.x - podW/4 + rx, podPos.y - podH/4 + ry, podW/4, podH/4, podW/2, podH/2, 1f, 1f, angleDeg)
+            batch.draw(white, podPos.x - podW_final/4 + rx, podPos.y - podH/4 + ry, podW_final/4, podH/4, podW_final/2, podH/2, 1f, 1f, angleDeg)
         }
         batch.setColor(Color.WHITE)
     }
 
     fun renderTrail(shapeRenderer: ShapeRenderer) {
         trail.render(shapeRenderer, 1.5f * scale)
+        for (effect in ventingEffects) {
+            effect.render(shapeRenderer, 1.5f * scale)
+        }
     }
 
     fun fireWeapons(defaultTargetDir: Vector2, onProjectileCreated: (Projectile) -> Unit, potentialTargets: List<Ship>) {
@@ -285,8 +409,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             val dist = toTarget.len2()
             if (side != 0f) {
                 val dot = toTarget.dot(right)
-                val isOnCorrectSide = if (side > 0) dot > 0 else dot < 0
-                if (!isOnCorrectSide) continue
+                if ((side > 0 && dot <= 0) || (side < 0 && dot >= 0)) continue
             }
             if (dist < minDist) {
                 minDist = dist
@@ -314,6 +437,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 closest = target
             }
         }
+
         return closest?.let { target ->
             val toTarget = target.body.position.cpy().sub(origin)
             val dist = toTarget.len()
@@ -337,8 +461,17 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         } else {
             health -= amount
             if (impactPoint != null) {
-                val localImpact = impactPoint.cpy().sub(body.position).rotateRad(-body.angle)
-                damageImpacts.add(localImpact)
+                val visualAngle = body.angle - (90f * MathUtils.degreesToRadians)
+                val localImpact = impactPoint.cpy().sub(body.position).rotateRad(-visualAngle)
+
+                val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
+                val hullW = (1.5f * scale) / 2f
+                val hullH = (1.5f * scale * (1f + progress * 2f)) / 2f
+
+                localImpact.x = MathUtils.clamp(localImpact.x, -hullW, hullW)
+                localImpact.y = MathUtils.clamp(localImpact.y, -hullH, hullH)
+
+                damageImpacts.add(DamagePoint(localImpact, Math.max(0.15f, 0.2f * scale), MathUtils.random(100f), MathUtils.random(0.05f, 0.15f)))
             }
         }
     }
@@ -354,5 +487,6 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, level)
         texture = Texture(pixmap)
         damageImpacts.clear()
+        ventingEffects.clear()
     }
 }

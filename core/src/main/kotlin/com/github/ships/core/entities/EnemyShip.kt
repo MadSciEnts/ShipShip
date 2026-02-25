@@ -10,16 +10,21 @@ import kotlin.math.min
 import kotlin.math.pow
 
 class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world, x, y, Color(0.5f, 0.6f, 0.5f, 1f)) {
-    private enum class State { WANDER, PURSUE, RETREAT }
+    private enum class State { WANDER, PURSUE, RETREAT, DODGE, REPAIR_MODE }
     private var state = State.WANDER
 
-    private val baseForce = 5f
-    private val sensorRange = 35f // Increased search range further
-    private val baseAttackRange = 15f // Increased weapon range for enemies
+    private val baseForce = 25f
+    private val sensorRange = 35f
+    private val baseAttackRange = 15f
 
     private var wanderTimer = 0f
     private val wanderDir = Vector2()
     private var isAggravated = false
+
+    // Dodge mechanics
+    private var dodgeTimer = 0f
+    private val dodgeDir = Vector2()
+    private var dodgeWobbleTimer = 0f
 
     var onDeath: ((Ship) -> Unit)? = null
 
@@ -34,9 +39,8 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
         maxShield = 0f
 
         createBody()
-        baseMaxSpeed = 6f
-        // Enemies fire more frequently (reduced cooldown from 1.0 to 0.4)
-        weaponPorts.add(ProjectileWeapon(Rarity.COMMON, 0.8f))
+        baseMaxSpeed = 12f
+        weaponPorts.add(ProjectileWeapon(Rarity.COMMON, 1.2f))
     }
 
     override fun createBody() {
@@ -60,7 +64,13 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
 
     override fun takeDamage(amount: Float, impactPoint: Vector2?) {
         super.takeDamage(amount, impactPoint)
-        isAggravated = true // Pursue if attacked
+        isAggravated = true
+        if (state != State.DODGE) {
+            state = State.DODGE
+            dodgeTimer = MathUtils.random(2f, 3f)
+            dodgeDir.set(MathUtils.random(-1f, 1f), MathUtils.random(-1f, 1f)).nor()
+            dodgeWobbleTimer = 0f
+        }
     }
 
     override fun die() {
@@ -73,15 +83,22 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
         val adjustedSensorRange = sensorRange * scale
         val weaponRange = baseAttackRange * scale
 
-        val isOverwhelmed = health < maxHealth * 0.3f
+        val needsRepair = health < maxHealth * 0.4f
+        isSignalingRepair = needsRepair
 
-        if (distance < adjustedSensorRange || isAggravated) {
-            state = if (isOverwhelmed && allies.size < 2) State.RETREAT else State.PURSUE
+        // State logic
+        if (dodgeTimer > 0) {
+            dodgeTimer -= dt
+            state = State.DODGE
+        } else if (state == State.REPAIR_MODE) {
+            // Repair mode logic handled in updateAI or specialized method
+        } else if (distance < adjustedSensorRange || isAggravated) {
+            state = if (needsRepair) State.RETREAT else State.PURSUE
         } else {
             state = State.WANDER
         }
 
-        val force = Vector2()
+        val forceVector = Vector2()
         val toPlayer = playerPos.cpy().sub(body.position).nor()
 
         when (state) {
@@ -91,62 +108,62 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
                     wanderTimer = MathUtils.random(2f, 5f)
                     wanderDir.set(MathUtils.random(-1f, 1f), MathUtils.random(-1f, 1f)).nor()
                 }
-                force.set(wanderDir).scl(baseForce * 0.5f * scale * scale)
-
-                if (body.linearVelocity.len2() > 0.1f) {
-                    body.setTransform(body.position, body.linearVelocity.angleRad())
-                }
+                forceVector.set(wanderDir).scl(baseForce * 0.5f * scale)
+            }
+            State.DODGE -> {
+                dodgeWobbleTimer += dt * 10f
+                val wobble = MathUtils.sin(dodgeWobbleTimer) * 0.8f
+                val sideDir = dodgeDir.cpy().rotate90(1)
+                forceVector.set(dodgeDir).add(sideDir.scl(wobble)).nor().scl(baseForce * 1.5f * scale)
             }
             State.PURSUE -> {
-                val playerWidth = 1.5f * player.scale
-                val desiredDistance = min(weaponRange * 0.7f, playerWidth * 3f)
-
+                val desiredDistance = min(weaponRange * 0.7f, 5f * scale)
                 if (distance > desiredDistance + 1f) {
-                    force.set(toPlayer).scl(baseForce * 1.5f * scale * scale) // Faster pursuit
+                    forceVector.set(toPlayer).scl(baseForce * scale)
                 } else if (distance < desiredDistance - 1f) {
-                    force.set(toPlayer).scl(-baseForce * scale * scale)
-                } else {
-                    body.linearVelocity = body.linearVelocity.scl(0.95f)
+                    forceVector.set(toPlayer).scl(-baseForce * scale)
                 }
-                body.setTransform(body.position, toPlayer.angleRad())
-
-                if (distance < weaponRange) {
-                    fireWeapons(toPlayer, onProjectileCreated, potentialTargets)
-                }
+                if (distance < weaponRange) fireWeapons(toPlayer, onProjectileCreated, potentialTargets)
             }
             State.RETREAT -> {
-                val flockingForce = calculateFlocking(allies)
-                val retreatDir = toPlayer.cpy().scl(-1f).add(flockingForce.scl(2f)).nor()
-                force.set(retreatDir).scl(baseForce * 1.5f * scale * scale)
-
-                body.setTransform(body.position, toPlayer.angleRad())
-                if (distance < weaponRange) {
-                    fireWeapons(toPlayer, onProjectileCreated, potentialTargets)
+                val repairStation = allies.firstOrNull { it != this && it.health >= it.maxHealth }
+                if (repairStation != null) {
+                    val toStation = repairStation.body.position.cpy().sub(body.position).nor()
+                    forceVector.set(toStation).scl(baseForce * 1.2f * scale)
+                } else {
+                    forceVector.set(toPlayer).scl(-baseForce * scale)
+                }
+            }
+            State.REPAIR_MODE -> {
+                isRepairingAlly = true
+                val target = allies.firstOrNull { it.isSignalingRepair }
+                if (target != null) {
+                    val toTarget = target.body.position.cpy().sub(body.position).nor()
+                    forceVector.set(toTarget).scl(baseForce * scale)
+                    if (body.position.dst(target.body.position) < (scale + target.scale)) {
+                        // Heal 10% every 2 seconds = 5% per second
+                        val healAmt = maxHealth * 0.05f * dt
+                        target.receiveHeal(healAmt)
+                        activeBeams.add(BeamData(body.position.cpy(), target.body.position.cpy(), Color.CYAN, 0.1f, 0.1f, 0.1f * scale))
+                    }
+                } else {
+                    state = State.WANDER
+                    isRepairingAlly = false
                 }
             }
         }
 
-        body.applyForceToCenter(force, true)
-    }
-
-    private fun calculateFlocking(allies: List<EnemyShip>): Vector2 {
-        val force = Vector2()
-        var count = 0
-        val neighborhood = 15f * scale
-
-        for (ally in allies) {
-            if (ally == this) continue
-            val dist = body.position.dst(ally.body.position)
-            if (dist < neighborhood) {
-                force.add(ally.body.linearVelocity)
-                force.add(ally.body.position.cpy().sub(body.position).nor().scl(0.8f))
-                count++
-            }
+        // Transition Undamaged to Repair mode if someone signals
+        if (health >= maxHealth && state != State.REPAIR_MODE) {
+            val signal = allies.firstOrNull { it.isSignalingRepair && it.body.position.dst(body.position) < sensorRange * scale }
+            if (signal != null) state = State.REPAIR_MODE
         }
 
-        if (count > 0) {
-            force.scl(1f / count).nor()
+        body.applyForceToCenter(forceVector, true)
+
+        if (forceVector.len2() > 0.01f) {
+            val targetAngle = forceVector.angleRad()
+            body.setTransform(body.position, MathUtils.lerpAngle(body.angle, targetAngle, 0.15f))
         }
-        return force
     }
 }

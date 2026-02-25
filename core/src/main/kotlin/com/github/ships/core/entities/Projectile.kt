@@ -26,7 +26,6 @@ class Projectile(
     val texture: Texture = if (isEnemy) {
         ProceduralTextureGenerator.getRectangleTexture(20, 20)
     } else {
-        // Player projectiles: reduced width from 12 to 6 to match 1/2 width request
         ProceduralTextureGenerator.getRectangleTexture(6, 40)
     }
 
@@ -36,13 +35,10 @@ class Projectile(
 
     private val damageScale = (1.5f + (damage - 1f) * 0.1f) * chargeMultiplier
 
-    // Player width reduced from 0.3f to 0.15f (1/2 as wide)
     private val baseWidth = (if (isEnemy) 0.5f else 0.15f) * damageScale
     private val baseHeight = (if (isEnemy) 0.5f else 1.0f) * damageScale
 
     init {
-        // Calculate dynamic offset so the projectile spawns in front of the mount point
-        // instead of centered on it. We shift the starting position forward by half its length.
         val spawnX = x + direction.x * (baseHeight / 2f)
         val spawnY = y + direction.y * (baseHeight / 2f)
 
@@ -81,6 +77,9 @@ class Projectile(
         if (isEnemy) {
             if (lifeTime <= 0) active = false
             rotationTimer += dt * 500f
+
+            // Fixed: Use owner.ventingAtmos correctly
+            owner.ventingAtmos.update(dt, body.position, direction.cpy().scl(-2f))
         } else {
             if (isOffScreen) active = false
             if (lifeTime <= 0) active = false
@@ -90,21 +89,6 @@ class Projectile(
         body.setLinearVelocity(direction.x * worldSpeed, direction.y * worldSpeed)
     }
 
-    /**
-     * NOTE FOR FUTURE SELF / AGENTS:
-     * The "Black Box" bug was fixed by refactoring the ProceduralTextureGenerator to create
-     * pure WHITE base textures. We then apply the projectile's specific color using
-     * batch.setColor(renderColor) during this render pass.
-     *
-     * WHY THIS WORKS:
-     * Previously, colors were baked into the texture pixels. Tinting a colored texture with
-     * another color resulted in "Color Multiplication" (e.g., Red * Red = Dark Red), which
-     * often collapsed into black on certain mobile GPU drivers. Using a White base ensures
-     * the mathematical identity (White * Color = Color), preserving full vibrance.
-     *
-     * We also explicitly reset batch.setColor(Color.WHITE) at the end of this function to
-     * prevent "Color Leaks" where the projectile color would stain subsequent draw calls (like ships).
-     */
     fun render(batch: SpriteBatch, zoom: Float, worldWidth: Float) {
         val angle = if (isEnemy) rotationTimer else body.angle * 57.295776f
 

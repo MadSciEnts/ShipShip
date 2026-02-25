@@ -60,17 +60,17 @@ class StartScreen(val game: ShipShipGame) : Screen {
         batch.begin()
 
         // STATIC Main Title
-        font.data.setScale(5f)
+        font.data.setScale(8f)
         font.setColor(1f, 1f, 1f, fade)
-        layout.setText(font, "ShipShip")
-        font.draw(batch, "ShipShip", (uiCam.viewportWidth - layout.width) / 2f, uiCam.viewportHeight / 2f + 100f)
+        layout.setText(font, "-=[ ShipShip ]=-")
+        font.draw(batch, "-=[ ShipShip ]=-", (uiCam.viewportWidth - layout.width) / 2f, uiCam.viewportHeight / 2f + 100f)
 
         // PULSING Subtitle
-        font.data.setScale(2f)
+        font.data.setScale(4f)
         val alpha = (MathUtils.sin(time * 4f) + 1f) / 2f
         font.setColor(1f, 1f, 1f, alpha * fade)
-        layout.setText(font, "Tap to Begin")
-        font.draw(batch, "Tap to Begin", (uiCam.viewportWidth - layout.width) / 2f, uiCam.viewportHeight / 2f - 50f)
+        layout.setText(font, "[ Tap to Begin ] ")
+        font.draw(batch, "[ Tap to Begin ] ", (uiCam.viewportWidth - layout.width) / 2f, uiCam.viewportHeight / 2f - 250f)
 
         batch.end()
 

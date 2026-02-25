@@ -38,7 +38,7 @@ class MotionTrail(var color: Color) {
                 pointPool.free(p)
             } else {
                 val ageRatio = 1f - (p.life / maxLife)
-                val turbulence = ageRatio * 0.75f
+                val turbulence = ageRatio * 1f
                 p.offset.add(
                     MathUtils.random(-turbulence, turbulence) * dt * 5f,
                     MathUtils.random(-turbulence, turbulence) * dt * 5f

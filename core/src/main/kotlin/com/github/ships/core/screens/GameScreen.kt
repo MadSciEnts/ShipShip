@@ -32,13 +32,6 @@ import com.github.ships.core.utils.Starfield
 import com.github.ships.core.weapons.ProjectileWeapon
 import com.github.ships.core.weapons.Rarity
 
-/**
- * NOTE FOR FUTURE AGENTS:
- * 1. STABILITY: Use indexed for-loops (size-1 downTo 0) for all entity updates.
- *    LibGDX iterators throw GdxRuntimeException if modification (removal) happens nested.
- * 2. RENDERING: Keep SpriteBatch and ShapeRenderer passes separate. Never nest .begin() calls.
- * 3. PERFORMANCE: All procedural textures are MANAGED via the generator cache.
- */
 class GameScreen(val game: ShipShipGame) : Screen {
     private val batch = SpriteBatch()
     private val shapeRenderer = ShapeRenderer()
@@ -57,6 +50,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private lateinit var touchpad: Touchpad
     private lateinit var fireButton: ImageButton
     private lateinit var chargeButton: ImageButton
+    private val chargeButtonDrawables = Array<TextureRegionDrawable>()
+
     private lateinit var levelUpBtn: TextButton
     private lateinit var levelDownBtn: TextButton
     private lateinit var posLabel: Label
@@ -133,11 +128,11 @@ class GameScreen(val game: ShipShipGame) : Screen {
         skin.add("test", testButtonStyle)
 
         val touchpadStyle = Touchpad.TouchpadStyle()
-        touchpadStyle.knob = com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(ProceduralTextureGenerator.createSciFiJoystickKnob(80))
-        touchpadStyle.background = com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(ProceduralTextureGenerator.createSciFiJoystickBase(250))
+        touchpadStyle.knob = com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(ProceduralTextureGenerator.createSciFiJoystickKnob(120))
+        touchpadStyle.background = com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable(ProceduralTextureGenerator.createSciFiJoystickBase(375))
 
         touchpad = Touchpad(10f, touchpadStyle)
-        touchpad.setBounds(50f, 50f, 300f, 300f)
+        touchpad.setBounds(50f, 50f, 450f, 450f)
         uiStage.addActor(touchpad)
 
         val fireStyle = ImageButton.ImageButtonStyle()
@@ -157,9 +152,14 @@ class GameScreen(val game: ShipShipGame) : Screen {
         })
         uiStage.addActor(fireButton)
 
+        // Cache charge button textures for the blue lights effect
+        for (i in 0..12) {
+            chargeButtonDrawables.add(TextureRegionDrawable(ProceduralTextureGenerator.create8BitChargeButton(250, i / 12f)))
+        }
+
         val chargeStyle = ImageButton.ImageButtonStyle()
-        chargeStyle.up = fireStyle.up
-        chargeStyle.down = fireStyle.down
+        chargeStyle.up = chargeButtonDrawables[0]
+        chargeStyle.down = chargeButtonDrawables[0]
 
         chargeButton = ImageButton(chargeStyle)
         chargeButton.setColor(Color.GRAY)
@@ -291,7 +291,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         world.step(1/60f, 6, 2)
 
-        if (enemies.size < 10 + (player.level / 2)) spawnEnemy()
+        if (enemies.size < 20 + player.level) spawnEnemy()
 
         player.update(delta)
         player.applyInput(touchpad.knobPercentX, touchpad.knobPercentY, delta)
@@ -304,19 +304,47 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         if (isCharging) {
             val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
+            // Update texture based on charge level
+            val index = (chargeRatio * 12).toInt().coerceIn(0, 12)
+            chargeButton.style.up = chargeButtonDrawables[index]
+            chargeButton.style.down = chargeButtonDrawables[index]
+
             // Pulse bright blue
-            chargeButton.color = Color(1f, 1f - chargeRatio, 1f - chargeRatio, 1f).lerp(Color.CYAN, chargeRatio)
+            chargeButton.color = Color.GRAY.cpy().lerp(Color.CYAN, chargeRatio)
         } else {
+            chargeButton.style.up = chargeButtonDrawables[0]
+            chargeButton.style.down = chargeButtonDrawables[0]
             chargeButton.color = Color.GRAY
         }
 
+        val visibleW = viewport.worldWidth * camera.zoom
+        val visibleH = viewport.worldHeight * camera.zoom
+        val left = camera.position.x - visibleW/2f
+        val right = camera.position.x + visibleW/2f
+        val bottom = camera.position.y - visibleH/2f
+        val top = camera.position.y + visibleH/2f
+
         val potentialTargets = Array<Ship>()
         for (i in 0 until enemies.size) {
-            potentialTargets.add(enemies[i])
+            val e = enemies[i]
+            if (e.body.position.x > left && e.body.position.x < right &&
+                e.body.position.y > bottom && e.body.position.y < top) {
+                potentialTargets.add(e)
+            }
         }
 
         if (isFiring) {
-            val closest = findClosestEnemy()
+            var closest: EnemyShip? = null
+            var minDist = Float.MAX_VALUE
+            for (i in 0 until potentialTargets.size) {
+                val e = potentialTargets[i] as EnemyShip
+                val dist = e.body.position.dst2(player.body.position)
+                if (dist < minDist) {
+                    minDist = dist
+                    closest = e
+                }
+            }
+
             val fireDir = if (closest != null) {
                 closest.body.position.cpy().sub(player.body.position).nor()
             } else {
@@ -335,6 +363,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
         }
 
         val allEnemiesList = enemies.toList()
+        var closestOffScreen: EnemyShip? = null
+        var minOffScreenDist = Float.MAX_VALUE
+
         for (i in (enemies.size - 1) downTo 0) {
             val e = enemies[i]
             val targetList = Array<Ship>()
@@ -350,7 +381,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
             e.update(delta)
             e.updateAI(player, delta, { projectiles.add(it) }, targetList.toList(), allEnemiesList)
 
-            // Task #4: Uninstantiate enemy ships that are more than 8 screen lengths out of view
             val distToPlayer = e.body.position.dst(player.body.position)
             val despawnRadius = viewport.worldWidth * 8f
 
@@ -358,14 +388,21 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 if (e.health <= 0) e.die()
                 bodiesToRemove.add(e.body)
                 enemies.removeIndex(i)
+            } else {
+                val ex = e.body.position.x
+                val ey = e.body.position.y
+                if (ex < left || ex > right || ey < bottom || ey > top) {
+                    if (distToPlayer < minOffScreenDist) {
+                        minOffScreenDist = distToPlayer
+                        closestOffScreen = e
+                    }
+                }
             }
         }
 
         for (i in (crystals.size - 1) downTo 0) {
             val c = crystals[i]
-            val visibleW = viewport.worldWidth * camera.zoom
-            val visibleH = viewport.worldHeight * camera.zoom
-            c.update(delta, player, camera.position.x - visibleW/2f, camera.position.x + visibleW/2f, camera.position.y - visibleH/2f, camera.position.y + visibleH/2f, camera.zoom, viewport.worldWidth)
+            c.update(delta, player, left, right, bottom, top, camera.zoom, viewport.worldWidth)
             if (!c.active) {
                 bodiesToRemove.add(c.body)
                 crystals.removeIndex(i)
@@ -374,12 +411,12 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         effectManager.update(delta)
 
+        val unitsPerPixel = (viewport.worldWidth * camera.zoom) / Gdx.graphics.width.toFloat()
         val lerpSpeed = 3f
         camera.zoom = MathUtils.lerp(camera.zoom, player.scale, delta * lerpSpeed)
         camera.position.set(player.body.position.x, player.body.position.y, 0f)
         camera.update()
 
-        // 1. Starfield
         batch.projectionMatrix = camera.combined
         batch.begin()
         Gdx.gl.glEnable(GL20.GL_BLEND)
@@ -388,7 +425,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
         batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA)
         batch.end()
 
-        // 2. Trails and Beams
         Gdx.gl.glEnable(GL20.GL_BLEND)
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
@@ -398,8 +434,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
         }
         player.renderBeams(shapeRenderer)
 
+        player.renderDamageArtifacts(shapeRenderer, unitsPerPixel)
         for (i in 0 until enemies.size) {
-            enemies[i].renderDamageArtifacts(shapeRenderer)
+            enemies[i].renderDamageArtifacts(shapeRenderer, unitsPerPixel)
         }
         shapeRenderer.end()
 
@@ -425,7 +462,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
             renderEdgeGlow()
         }
 
-        renderEnemyArrows()
+        renderEnemyArrows(closestOffScreen)
 
         val px = Math.round(player.body.position.x)
         val py = Math.round(player.body.position.y)
@@ -445,9 +482,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
         batch.begin()
         font.data.setScale(3f)
         font.setColor(Color.WHITE)
-        val lvlText = "LVL ${player.level}"
+        val lvlText = "-=[ ${player.level} ]=-"
         layout.setText(font, lvlText)
-        font.draw(batch, lvlText, (uiStage.width - layout.width) / 2f, uiStage.height - 20f)
+        font.draw(batch, lvlText, (uiStage.width - layout.width) / 2f, uiStage.height - 115f)
         batch.end()
     }
 
@@ -513,13 +550,18 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.end()
     }
 
-    private fun renderEnemyArrows() {
+    private var arrowColorTimer = 0f
+    private fun renderEnemyArrows(closestOffScreen: EnemyShip?) {
         val visibleW = viewport.worldWidth * camera.zoom
         val visibleH = viewport.worldHeight * camera.zoom
         val left = camera.position.x - visibleW/2f
         val right = camera.position.x + visibleW/2f
         val bottom = camera.position.y - visibleH/2f
         val top = camera.position.y + visibleH/2f
+
+        arrowColorTimer += Gdx.graphics.deltaTime
+        val pulse = (MathUtils.sin(arrowColorTimer * 3f) + 1f) / 2f
+        val closestColor = Color.RED.cpy().lerp(Color.WHITE, pulse)
 
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
@@ -534,15 +576,18 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 val dist = toEnemy.len()
                 val dir = toEnemy.nor()
 
-                // Fixed: Scaling arrows based on distance
-                val cameraThreshold = Math.max(visibleW, visibleH) / 2f
-                val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.3f, 1.0f)
-
                 val arrowX = MathUtils.clamp(camera.position.x + dir.x * (visibleW/2f), left, right)
                 val arrowY = MathUtils.clamp(camera.position.y + dir.y * (visibleH/2f), bottom, top)
 
-                shapeRenderer.setColor(Color.RED.r, Color.RED.g, Color.RED.b, scaleFactor * 0.8f)
-                shapeRenderer.circle(arrowX, arrowY, 0.8f * camera.zoom * scaleFactor)
+                if (enemy == closestOffScreen) {
+                    shapeRenderer.setColor(closestColor)
+                    shapeRenderer.circle(arrowX, arrowY, 0.8f * camera.zoom)
+                } else {
+                    val cameraThreshold = Math.max(visibleW, visibleH) / 2f
+                    val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.3f, 1.0f)
+                    shapeRenderer.setColor(Color.RED.r, Color.RED.g, Color.RED.b, scaleFactor * 0.8f)
+                    shapeRenderer.circle(arrowX, arrowY, 0.8f * camera.zoom * scaleFactor)
+                }
             }
         }
         shapeRenderer.end()
@@ -568,7 +613,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.projectionMatrix = uiStage.viewport.camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
 
-        // Active bars (twice as long - 400f)
         shapeRenderer.setColor(Color.RED)
         shapeRenderer.rect(20f, uiStage.height - 40f, (player.health / player.maxHealth) * 400f, 20f)
         shapeRenderer.setColor(Color.BLUE)
@@ -579,10 +623,11 @@ class GameScreen(val game: ShipShipGame) : Screen {
     }
 
     private fun renderRadar() {
+        // Task: Extended radar information area substantially (at least 4 times larger area = 2x radius)
         val radarSize = 250f
         val radarX = uiStage.width - radarSize - 20f
         val radarY = uiStage.height - radarSize - 20f
-        val radarWorldRange = 80f * camera.zoom
+        val radarWorldRange = 160f * camera.zoom // Doubled range from 80f to 160f
         val radarScale = radarSize / radarWorldRange
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line)

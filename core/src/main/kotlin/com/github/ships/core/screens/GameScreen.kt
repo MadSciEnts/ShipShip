@@ -138,7 +138,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         fireStyle.down = TextureRegionDrawable(ProceduralTextureGenerator.create8BitAttackButton(250, true))
 
         fireButton = ImageButton(fireStyle)
-        fireButton.setColor(Color.RED) // Tint attack button RED
+        fireButton.setColor(Color.RED)
         fireButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isFiring = true
@@ -155,7 +155,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         chargeStyle.down = fireStyle.down
 
         chargeButton = ImageButton(chargeStyle)
-        chargeButton.setColor(Color.GRAY) // Start GREY
+        chargeButton.setColor(Color.GRAY)
         chargeButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isCharging = true
@@ -211,9 +211,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
             chargeButton.setBounds(portraitX, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
         }
 
-        val testBtnSize = 125f
-        levelUpBtn.setBounds(20f, height / 2f + testBtnSize / 2f + 10f, testBtnSize, testBtnSize)
-        levelDownBtn.setBounds(20f, height / 2f - testBtnSize / 2f - 10f, testBtnSize, testBtnSize)
+        val testBtnSizeVal = 125f
+        levelUpBtn.setBounds(20f, height / 2f + testBtnSizeVal / 2f + 10f, testBtnSizeVal, testBtnSizeVal)
+        levelDownBtn.setBounds(20f, height / 2f - testBtnSizeVal / 2f - 10f, testBtnSizeVal, testBtnSizeVal)
 
         posLabel.setPosition(width / 2f - posLabel.prefWidth / 2f, 20f)
     }
@@ -297,10 +297,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
         if (isCharging) {
             val chargeRatio = MathUtils.clamp(player.chargeTime / 5.0f, 0f, 1f)
-            // Pulse bright blue
-            chargeButton.color = Color.GRAY.cpy().lerp(Color.CYAN, chargeRatio)
+            chargeButton.color = Color(1f, 1f - chargeRatio, 1f - chargeRatio, 1f).lerp(Color.CYAN, chargeRatio)
         } else {
-            chargeButton.color = Color.GRAY
+            chargeButton.color = Color.WHITE
         }
 
         val potentialTargets = Array<Ship>()
@@ -318,18 +317,16 @@ class GameScreen(val game: ShipShipGame) : Screen {
             player.fireWeapons(fireDir, { projectiles.add(it) }, potentialTargets.toList())
         }
 
-        // FIXED: Indexed loop to avoid iterator crash and shared texture disposal
         for (i in (projectiles.size - 1) downTo 0) {
             val p = projectiles[i]
             p.update(delta, camera.position, camera.zoom, viewport.worldWidth, viewport.worldHeight)
             if (!p.active) {
                 bodiesToRemove.add(p.body)
-                // DO NOT dispose p.texture here as it's shared from cache
                 projectiles.removeIndex(i)
             }
         }
 
-        val allEnemies = enemies.toList()
+        val allEnemiesList = enemies.toList()
         for (i in (enemies.size - 1) downTo 0) {
             val e = enemies[i]
             val targetList = Array<Ship>()
@@ -342,7 +339,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 enemiesToSpawn.add(Vector2(minionX, minionY) to 1)
             }
 
-            e.updateAI(player, delta, { projectiles.add(it) }, targetList.toList(), allEnemies)
+            // FIX: Call update(delta) so trails and effects work
+            e.update(delta)
+            e.updateAI(player, delta, { projectiles.add(it) }, targetList.toList(), allEnemiesList)
             if (e.health <= 0) {
                 e.die()
                 bodiesToRemove.add(e.body)
@@ -368,11 +367,16 @@ class GameScreen(val game: ShipShipGame) : Screen {
         camera.position.set(player.body.position.x, player.body.position.y, 0f)
         camera.update()
 
+        // 1. Starfield
         batch.projectionMatrix = camera.combined
         batch.begin()
+        Gdx.gl.glEnable(GL20.GL_BLEND)
+        batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE)
         starfield.render(batch, player.body.position, camera.zoom, viewport.worldWidth, viewport.worldHeight, delta)
+        batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA)
         batch.end()
 
+        // 2. Trails and Beams
         Gdx.gl.glEnable(GL20.GL_BLEND)
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
@@ -381,12 +385,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
             enemies[i].renderTrail(shapeRenderer)
         }
         player.renderBeams(shapeRenderer)
-
-        for (i in 0 until enemies.size) {
-            enemies[i].renderDamageArtifacts(shapeRenderer)
-        }
         shapeRenderer.end()
 
+        // 3. Main Sprite Batch (Ships, Projectiles, Crystals)
         batch.begin()
         player.render(batch)
         for (i in 0 until enemies.size) {
@@ -400,7 +401,16 @@ class GameScreen(val game: ShipShipGame) : Screen {
         }
         batch.end()
 
-        shapeRenderer.projectionMatrix = camera.combined
+        // 4. Damage Pass (Closer to Camera)
+        Gdx.gl.glEnable(GL20.GL_BLEND)
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
+        player.renderDamageArtifacts(shapeRenderer)
+        for (i in 0 until enemies.size) {
+            enemies[i].renderDamageArtifacts(shapeRenderer)
+        }
+        shapeRenderer.end()
+
+        // 5. Special Effects (Explosions, Shields)
         effectManager.render(shapeRenderer)
 
         renderEnemyHealthBars()
@@ -459,7 +469,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 blueComp = 0f
             } else if (angle < 270) {
                 val t = (angle - 180f) / 90f
-                redComp = t
+                redComp = 1f - t
                 greenComp = 0f
                 blueComp = t
             } else {
@@ -550,7 +560,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.projectionMatrix = uiStage.viewport.camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
 
-        // Active bars (twice as long - 400f)
         shapeRenderer.setColor(Color.RED)
         shapeRenderer.rect(20f, uiStage.height - 40f, (player.health / player.maxHealth) * 400f, 20f)
         shapeRenderer.setColor(Color.BLUE)
@@ -618,5 +627,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
         for (i in 0 until projectiles.size) projectiles[i].dispose()
         for (i in 0 until crystals.size) crystals[i].dispose()
         starfield.dispose()
+        font.dispose()
     }
 }

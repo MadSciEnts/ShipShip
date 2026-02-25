@@ -2,14 +2,15 @@ package com.github.ships.core.utils
 
 import com.badlogic.gdx.Gdx
 import com.badlogic.gdx.graphics.Color
+import com.badlogic.gdx.graphics.GL20
 import com.badlogic.gdx.graphics.Texture
 import com.badlogic.gdx.graphics.g2d.SpriteBatch
 import com.badlogic.gdx.math.MathUtils
 import com.badlogic.gdx.math.Vector2
 import java.util.*
 
-class Starfield(poolSize: Int = 0) { // poolSize unused in new robust version
-    private val starTexture: Texture = ProceduralTextureGenerator.getCircleTexture(8, Color.WHITE)
+class Starfield(poolSize: Int = 0) {
+    private val starTexture: Texture = ProceduralTextureGenerator.getCircleTexture(8)
     private val rand = Random()
 
     fun render(batch: SpriteBatch, cameraPos: Vector2, zoom: Float, vw: Float, vh: Float, delta: Float) {
@@ -17,30 +18,36 @@ class Starfield(poolSize: Int = 0) { // poolSize unused in new robust version
         val worldVisibleH = vh * zoom
         val unitsPerPixel = worldVisibleW / Gdx.graphics.width.toFloat()
 
-        // Three layers of parallax
-        for (l in 0 until 3) {
-            val pFactor = 0.05f / (l + 1)
+        // Enable Additive Blending for a "glow" feel and to stop popping
+        Gdx.gl.glEnable(GL20.GL_BLEND)
+        batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE)
 
-            // Offset world by parallax factor
+        for (l in 0 until 3) {
+            val pFactor = when(l) {
+                0 -> 0.05f // Distant
+                1 -> 0.2f  // Mid
+                else -> 0.5f // Near
+            }
+
+            // Offset world relative to camera to ensure stars scale TOWARDS CENTER during zoom
             val offsetX = cameraPos.x * (1f - pFactor)
             val offsetY = cameraPos.y * (1f - pFactor)
 
-            // Grid-based deterministic star placement
-            // Grid size grows with zoom to keep pixel density same
-            val gridSize = 400f * zoom
-            val startX = MathUtils.floor((cameraPos.x - worldVisibleW / 2f - offsetX) / gridSize)
-            val endX = MathUtils.ceil((cameraPos.x + worldVisibleW / 2f - offsetX) / gridSize)
-            val startY = MathUtils.floor((cameraPos.y - worldVisibleH / 2f - offsetY) / gridSize)
-            val endY = MathUtils.ceil((cameraPos.y + worldVisibleH / 2f - offsetY) / gridSize)
+            // Grid size adjusted based on zoom to maintain density
+            val gridSize = 150f * zoom
 
-            for (gx in startX..endX) {
-                for (gy in startY..endY) {
-                    // Seed random with grid coords for consistency
+            val txStart = MathUtils.floor((cameraPos.x - worldVisibleW / 2f - offsetX) / gridSize)
+            val txEnd = MathUtils.ceil((cameraPos.x + worldVisibleW / 2f - offsetX) / gridSize)
+            val tyStart = MathUtils.floor((cameraPos.y - worldVisibleH / 2f - offsetY) / gridSize)
+            val tyEnd = MathUtils.ceil((cameraPos.y + worldVisibleH / 2f - offsetY) / gridSize)
+
+            for (gx in txStart..txEnd) {
+                for (gy in tyStart..tyEnd) {
                     val seed = (gx * 73856093L) xor (gy * 19349663L) xor (l * 83492791L)
                     rand.setSeed(seed)
 
-                    // 15-20 stars per grid cell
-                    val starsInCell = 15 + rand.nextInt(5)
+                    // 3x Density: approx 150 stars per cell
+                    val starsInCell = 150 + rand.nextInt(100)
                     for (i in 0 until starsInCell) {
                         val lx = rand.nextFloat() * gridSize
                         val ly = rand.nextFloat() * gridSize
@@ -48,15 +55,23 @@ class Starfield(poolSize: Int = 0) { // poolSize unused in new robust version
                         val drawX = gx * gridSize + lx + offsetX
                         val drawY = gy * gridSize + ly + offsetY
 
-                        // Twinkle and size
-                        val twinkle = (MathUtils.sin(drawX + drawY + (Gdx.graphics.frameId * 0.05f)) + 1f) / 2f
-                        val sizePx = 3f + rand.nextFloat() * 7f
+                        // Precise culling
+                        if (drawX < cameraPos.x - worldVisibleW / 2f - 1f || drawX > cameraPos.x + worldVisibleW / 2f + 1f ||
+                            drawY < cameraPos.y - worldVisibleH / 2f - 1f || drawY > cameraPos.y + worldVisibleH / 2f + 1f) continue
+
+                        val twinkle = (MathUtils.sin(drawX * 0.1f + drawY * 0.1f + (Gdx.graphics.frameId * 0.05f))) * 0.5f + 0.5f
+
+                        // Smaller stars: 2-6 pixels
+                        val sizePx = 2f + rand.nextFloat() * 4f
                         val renderSize = sizePx * unitsPerPixel
 
-                        val hue = rand.nextFloat() * 360f
-                        val sat = 0.2f + rand.nextFloat() * 0.4f
-                        val color = Color().fromHsv(hue, sat, 1f)
-                        color.a = (0.4f + 0.6f * twinkle) * (1.0f / (l + 1))
+                        val color = Color()
+                        if (rand.nextFloat() > 0.5f) {
+                            color.fromHsv(rand.nextFloat() * 360f, 0.3f, 1f)
+                        } else {
+                            color.set(1f, 1f, 1f, 1f)
+                        }
+                        color.a = (0.4f + 0.6f * twinkle) * (1.0f - (l * 0.2f))
 
                         batch.setColor(color)
                         batch.draw(starTexture, drawX - renderSize / 2f, drawY - renderSize / 2f, renderSize, renderSize)
@@ -64,10 +79,10 @@ class Starfield(poolSize: Int = 0) { // poolSize unused in new robust version
                 }
             }
         }
+        // Reset to standard alpha blending
+        batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA)
         batch.setColor(Color.WHITE)
     }
 
-    fun dispose() {
-        // Shared texture
-    }
+    fun dispose() {}
 }

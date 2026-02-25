@@ -5,6 +5,8 @@ import com.badlogic.gdx.Screen
 import com.badlogic.gdx.graphics.Color
 import com.badlogic.gdx.graphics.GL20
 import com.badlogic.gdx.graphics.OrthographicCamera
+import com.badlogic.gdx.graphics.g2d.BitmapFont
+import com.badlogic.gdx.graphics.g2d.GlyphLayout
 import com.badlogic.gdx.graphics.g2d.SpriteBatch
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer
 import com.badlogic.gdx.math.MathUtils
@@ -12,11 +14,13 @@ import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.physics.box2d.*
 import com.badlogic.gdx.scenes.scene2d.InputEvent
 import com.badlogic.gdx.scenes.scene2d.Stage
+import com.badlogic.gdx.scenes.scene2d.ui.ImageButton
 import com.badlogic.gdx.scenes.scene2d.ui.Label
 import com.badlogic.gdx.scenes.scene2d.ui.Skin
 import com.badlogic.gdx.scenes.scene2d.ui.TextButton
 import com.badlogic.gdx.scenes.scene2d.ui.Touchpad
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener
+import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable
 import com.badlogic.gdx.utils.Array
 import com.badlogic.gdx.utils.viewport.ExtendViewport
 import com.badlogic.gdx.utils.viewport.ScreenViewport
@@ -44,13 +48,16 @@ class GameScreen(val game: ShipShipGame) : Screen {
 
     private val uiStage = Stage(ScreenViewport())
     private lateinit var touchpad: Touchpad
-    private lateinit var fireButton: TextButton
-    private lateinit var chargeButton: TextButton
+    private lateinit var fireButton: ImageButton
+    private lateinit var chargeButton: ImageButton
     private lateinit var levelUpBtn: TextButton
     private lateinit var levelDownBtn: TextButton
     private lateinit var posLabel: Label
     private var isFiring = false
     private var isCharging = false
+
+    private val font = BitmapFont()
+    private val layout = GlyphLayout()
 
     private val bodiesToRemove = Array<Body>()
     private val enemiesToSpawn = Array<Pair<Vector2, Int>>()
@@ -126,7 +133,11 @@ class GameScreen(val game: ShipShipGame) : Screen {
         touchpad.setBounds(50f, 50f, 300f, 300f)
         uiStage.addActor(touchpad)
 
-        fireButton = TextButton("FIRE", skin)
+        val fireStyle = ImageButton.ImageButtonStyle()
+        fireStyle.up = TextureRegionDrawable(ProceduralTextureGenerator.create8BitAttackButton(250, false))
+        fireStyle.down = TextureRegionDrawable(ProceduralTextureGenerator.create8BitAttackButton(250, true))
+
+        fireButton = ImageButton(fireStyle)
         fireButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isFiring = true
@@ -138,7 +149,11 @@ class GameScreen(val game: ShipShipGame) : Screen {
         })
         uiStage.addActor(fireButton)
 
-        chargeButton = TextButton("CHARGE", skin)
+        val chargeStyle = ImageButton.ImageButtonStyle()
+        chargeStyle.up = fireStyle.up
+        chargeStyle.down = fireStyle.down
+
+        chargeButton = ImageButton(chargeStyle)
         chargeButton.addListener(object : ClickListener() {
             override fun touchDown(event: InputEvent?, x: Float, y: Float, pointer: Int, button: Int): Boolean {
                 isCharging = true
@@ -183,7 +198,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
         val width = Gdx.graphics.width.toFloat()
         val height = Gdx.graphics.height.toFloat()
         val fireBtnSize = 250f
-        val testBtnSize = fireBtnSize / 2f
         val margin = 50f
 
         if (width > height) { // Landscape
@@ -195,6 +209,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
             chargeButton.setBounds(portraitX, margin + fireBtnSize + 20f, fireBtnSize, fireBtnSize)
         }
 
+        val testBtnSize = 125f
         levelUpBtn.setBounds(20f, height / 2f + testBtnSize / 2f + 10f, testBtnSize, testBtnSize)
         levelDownBtn.setBounds(20f, height / 2f - testBtnSize / 2f - 10f, testBtnSize, testBtnSize)
 
@@ -231,7 +246,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private fun findClosestEnemy(): EnemyShip? {
         var closest: EnemyShip? = null
         var minDist = 1000f * player.scale * player.scale
-        for (enemy in enemies) {
+        for (i in 0 until enemies.size) {
+            val enemy = enemies[i]
             val dist = enemy.body.position.dst2(player.body.position)
             if (dist < minDist) {
                 minDist = dist
@@ -286,7 +302,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
         }
 
         val potentialTargets = Array<Ship>()
-        enemies.forEach { potentialTargets.add(it) }
+        for (i in 0 until enemies.size) {
+            potentialTargets.add(enemies[i])
+        }
 
         if (isFiring) {
             val closest = findClosestEnemy()
@@ -298,20 +316,18 @@ class GameScreen(val game: ShipShipGame) : Screen {
             player.fireWeapons(fireDir, { projectiles.add(it) }, potentialTargets.toList())
         }
 
-        // STABILITY FIX: Use traditional for loop to avoid "iterator cannot be used nested" crash
-        for (i in 0 until projectiles.size) {
+        for (i in (projectiles.size - 1) downTo 0) {
             val p = projectiles[i]
             p.update(delta, camera.position, camera.zoom, viewport.worldWidth, viewport.worldHeight)
             if (!p.active) {
                 bodiesToRemove.add(p.body)
-                p.texture.dispose()
+                // STABILITY FIX: DO NOT DISPOSE p.texture HERE as it is a shared cached resource!
                 projectiles.removeIndex(i)
-                break // Safely exit and re-evaluate next frame
             }
         }
 
         val allEnemies = enemies.toList()
-        for (i in 0 until enemies.size) {
+        for (i in (enemies.size - 1) downTo 0) {
             val e = enemies[i]
             val targetList = Array<Ship>()
             targetList.add(player)
@@ -328,11 +344,10 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 e.die()
                 bodiesToRemove.add(e.body)
                 enemies.removeIndex(i)
-                break
             }
         }
 
-        for (i in 0 until crystals.size) {
+        for (i in (crystals.size - 1) downTo 0) {
             val c = crystals[i]
             val visibleW = viewport.worldWidth * camera.zoom
             val visibleH = viewport.worldHeight * camera.zoom
@@ -340,7 +355,6 @@ class GameScreen(val game: ShipShipGame) : Screen {
             if (!c.active) {
                 bodiesToRemove.add(c.body)
                 crystals.removeIndex(i)
-                break
             }
         }
 
@@ -360,15 +374,27 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
         player.renderTrail(shapeRenderer)
-        enemies.forEach { it.renderTrail(shapeRenderer) }
+        for (i in 0 until enemies.size) {
+            enemies[i].renderTrail(shapeRenderer)
+        }
         player.renderBeams(shapeRenderer)
+
+        for (i in 0 until enemies.size) {
+            enemies[i].renderDamageArtifacts(shapeRenderer)
+        }
         shapeRenderer.end()
 
         batch.begin()
         player.render(batch)
-        enemies.forEach { it.render(batch) }
-        projectiles.forEach { it.render(batch, camera.zoom, viewport.worldWidth) }
-        crystals.forEach { it.render(batch, camera.zoom, viewport.worldWidth) }
+        for (i in 0 until enemies.size) {
+            enemies[i].render(batch)
+        }
+        for (i in 0 until projectiles.size) {
+            projectiles[i].render(batch, camera.zoom, viewport.worldWidth)
+        }
+        for (i in 0 until crystals.size) {
+            crystals[i].render(batch, camera.zoom, viewport.worldWidth)
+        }
         batch.end()
 
         shapeRenderer.projectionMatrix = camera.combined
@@ -391,7 +417,19 @@ class GameScreen(val game: ShipShipGame) : Screen {
         uiStage.draw()
 
         renderHUD()
+        renderLevelIndicator()
         renderRadar()
+    }
+
+    private fun renderLevelIndicator() {
+        batch.projectionMatrix = uiStage.viewport.camera.combined
+        batch.begin()
+        font.data.setScale(3f)
+        font.setColor(Color.WHITE)
+        val lvlText = "LVL ${player.level}"
+        layout.setText(font, lvlText)
+        font.draw(batch, lvlText, (uiStage.width - layout.width) / 2f, uiStage.height - 20f)
+        batch.end()
     }
 
     private fun updateBackgroundColor() {
@@ -467,7 +505,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
 
-        for (enemy in enemies) {
+        for (i in 0 until enemies.size) {
+            val enemy = enemies[i]
             val ex = enemy.body.position.x
             val ey = enemy.body.position.y
 
@@ -475,14 +514,16 @@ class GameScreen(val game: ShipShipGame) : Screen {
                 val toEnemy = Vector2(ex - camera.position.x, ey - camera.position.y)
                 val dist = toEnemy.len()
                 val dir = toEnemy.nor()
+
+                // Fixed: Scaling arrows based on distance
                 val cameraThreshold = Math.max(visibleW, visibleH) / 2f
-                val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.2f, 1.0f)
+                val scaleFactor = MathUtils.clamp(cameraThreshold / dist, 0.3f, 1.0f)
 
                 val arrowX = MathUtils.clamp(camera.position.x + dir.x * (visibleW/2f), left, right)
                 val arrowY = MathUtils.clamp(camera.position.y + dir.y * (visibleH/2f), bottom, top)
 
-                shapeRenderer.setColor(Color.RED.r, Color.RED.g, Color.RED.b, scaleFactor)
-                shapeRenderer.circle(arrowX, arrowY, 0.5f * camera.zoom * scaleFactor)
+                shapeRenderer.setColor(Color.RED.r, Color.RED.g, Color.RED.b, scaleFactor * 0.8f)
+                shapeRenderer.circle(arrowX, arrowY, 0.8f * camera.zoom * scaleFactor)
             }
         }
         shapeRenderer.end()
@@ -491,7 +532,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
     private fun renderEnemyHealthBars() {
         shapeRenderer.projectionMatrix = camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
-        for (enemy in enemies) {
+        for (i in 0 until enemies.size) {
+            val enemy = enemies[i]
             val pos = enemy.body.position
             val width = 1.5f * camera.zoom
             val height = 0.2f * camera.zoom
@@ -507,6 +549,7 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.projectionMatrix = uiStage.viewport.camera.combined
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled)
 
+        // Active bars (twice as long - 400f)
         shapeRenderer.setColor(Color.RED)
         shapeRenderer.rect(20f, uiStage.height - 40f, (player.health / player.maxHealth) * 400f, 20f)
         shapeRenderer.setColor(Color.BLUE)
@@ -533,7 +576,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
         shapeRenderer.circle(radarX + radarSize / 2, radarY + radarSize / 2, 4f)
 
         shapeRenderer.setColor(Color.RED)
-        for (enemy in enemies) {
+        for (i in 0 until enemies.size) {
+            val enemy = enemies[i]
             val dx = (enemy.body.position.x - player.body.position.x) * radarScale
             val dy = (enemy.body.position.y - player.body.position.y) * radarScale
             if (Math.abs(dx) < radarSize / 2 && Math.abs(dy) < radarSize / 2) {
@@ -542,7 +586,8 @@ class GameScreen(val game: ShipShipGame) : Screen {
         }
 
         shapeRenderer.setColor(Color.YELLOW)
-        for (crystal in crystals) {
+        for (i in 0 until crystals.size) {
+            val crystal = crystals[i]
             val dx = (crystal.body.position.x - player.body.position.x) * radarScale
             val dy = (crystal.body.position.y - player.body.position.y) * radarScale
             if (Math.abs(dx) < radarSize / 2 && Math.abs(dy) < radarSize / 2) {
@@ -568,9 +613,9 @@ class GameScreen(val game: ShipShipGame) : Screen {
         world.dispose()
         uiStage.dispose()
         player.dispose()
-        enemies.forEach { it.dispose() }
-        projectiles.forEach { it.dispose() }
-        crystals.forEach { it.dispose() }
+        for (i in 0 until enemies.size) enemies[i].dispose()
+        for (i in 0 until projectiles.size) projectiles[i].dispose()
+        for (i in 0 until crystals.size) crystals[i].dispose()
         starfield.dispose()
     }
 }

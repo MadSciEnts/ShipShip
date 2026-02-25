@@ -12,7 +12,7 @@
       tools:ignore="UnusedAttribute"
       android:theme="@style/GdxTheme">
     <activity
-        android:name="io.github.some_example_name.android.AndroidLauncher"
+        android:name="com.github.ships.android.AndroidLauncher"
         android:label="@string/app_name"
         android:screenOrientation="fullSensor"
         android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout"

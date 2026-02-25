@@ -57,14 +57,14 @@ class MotionTrail(var color: Color) {
             val lifeRatio = p1.life / maxLife
             val easedAlpha = Interpolation.pow2In.apply(lifeRatio)
 
-            // Color Transition using the trail's specific color
             val renderColor = color.cpy()
             renderColor.lerp(Color.BLACK, 1f - easedAlpha)
             renderColor.a = easedAlpha
 
-            // Dual-axis expansion: growth factor applied to overall width
-            val growFactor = 1.0f + (1.0f - easedAlpha) * 2.0f
-            val width = 0.3f * shipScale * growFactor
+            // Fixed: Reduced start width and increased growth to 4x in all axes
+            // Base width is now thinner (0.15f), growing to 0.6f (4x)
+            val growFactor = 1.0f + (1.0f - easedAlpha) * 3.0f
+            val width = 0.15f * shipScale * growFactor
 
             shapeRenderer.setColor(renderColor)
             shapeRenderer.rectLine(

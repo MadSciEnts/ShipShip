@@ -14,8 +14,8 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
     private var state = State.WANDER
 
     private val baseForce = 5f
-    private val sensorRange = 25f // Increased search range
-    private val baseAttackRange = 10f
+    private val sensorRange = 35f // Increased search range further
+    private val baseAttackRange = 15f // Increased weapon range for enemies
 
     private var wanderTimer = 0f
     private val wanderDir = Vector2()
@@ -35,7 +35,8 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
 
         createBody()
         baseMaxSpeed = 2f
-        weaponPorts.add(ProjectileWeapon(Rarity.COMMON, 1.0f))
+        // Enemies fire more frequently (reduced cooldown from 1.0 to 0.4)
+        weaponPorts.add(ProjectileWeapon(Rarity.COMMON, 0.4f))
     }
 
     override fun createBody() {
@@ -72,11 +73,10 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
         val adjustedSensorRange = sensorRange * scale
         val weaponRange = baseAttackRange * scale
 
-        // Determine state
         val isOverwhelmed = health < maxHealth * 0.3f
 
         if (distance < adjustedSensorRange || isAggravated) {
-            state = if (isOverwhelmed) State.RETREAT else State.PURSUE
+            state = if (isOverwhelmed && allies.size < 2) State.RETREAT else State.PURSUE
         } else {
             state = State.WANDER
         }
@@ -93,17 +93,16 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
                 }
                 force.set(wanderDir).scl(baseForce * 0.5f * scale * scale)
 
-                // Slowly face movement direction
                 if (body.linearVelocity.len2() > 0.1f) {
                     body.setTransform(body.position, body.linearVelocity.angleRad())
                 }
             }
             State.PURSUE -> {
                 val playerWidth = 1.5f * player.scale
-                val desiredDistance = min(weaponRange * 0.5f, playerWidth * 2f)
+                val desiredDistance = min(weaponRange * 0.7f, playerWidth * 3f)
 
                 if (distance > desiredDistance + 1f) {
-                    force.set(toPlayer).scl(baseForce * scale * scale)
+                    force.set(toPlayer).scl(baseForce * 1.5f * scale * scale) // Faster pursuit
                 } else if (distance < desiredDistance - 1f) {
                     force.set(toPlayer).scl(-baseForce * scale * scale)
                 } else {
@@ -116,14 +115,10 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
                 }
             }
             State.RETREAT -> {
-                // Flocking: Try to fly along side other allies
                 val flockingForce = calculateFlocking(allies)
+                val retreatDir = toPlayer.cpy().scl(-1f).add(flockingForce.scl(2f)).nor()
+                force.set(retreatDir).scl(baseForce * 1.5f * scale * scale)
 
-                // Retreating move away from player but influenced by allies
-                val retreatDir = toPlayer.cpy().scl(-1f).add(flockingForce).nor()
-                force.set(retreatDir).scl(baseForce * 1.2f * scale * scale)
-
-                // Still face player to fire back if possible
                 body.setTransform(body.position, toPlayer.angleRad())
                 if (distance < weaponRange) {
                     fireWeapons(toPlayer, onProjectileCreated, potentialTargets)
@@ -137,16 +132,14 @@ class EnemyShip(world: World, x: Float, y: Float, spawnLevel: Int) : Ship(world,
     private fun calculateFlocking(allies: List<EnemyShip>): Vector2 {
         val force = Vector2()
         var count = 0
-        val neighborhood = 10f * scale
+        val neighborhood = 15f * scale
 
         for (ally in allies) {
             if (ally == this) continue
             val dist = body.position.dst(ally.body.position)
             if (dist < neighborhood) {
-                // Alignment: follow same direction
                 force.add(ally.body.linearVelocity)
-                // Cohesion: move towards center of neighbors
-                force.add(ally.body.position.cpy().sub(body.position).nor().scl(0.5f))
+                force.add(ally.body.position.cpy().sub(body.position).nor().scl(0.8f))
                 count++
             }
         }

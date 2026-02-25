@@ -10,8 +10,8 @@ import java.util.*
 object ProceduralTextureGenerator {
     private val random = Random()
     private var whitePixel: TextureRegion? = null
-    private val circleCache = mutableMapOf<Pair<Int, Int>, Texture>()
-    private val rectCache = mutableMapOf<Triple<Int, Int, Int>, Texture>()
+
+    private val textureCache = mutableMapOf<String, Texture>()
 
     fun drawShipToPixmap(pixmap: Pixmap, color: Color, level: Int) {
         val width = pixmap.width
@@ -54,35 +54,68 @@ object ProceduralTextureGenerator {
         return whitePixel!!
     }
 
-    fun getCircleTexture(radius: Int, color: Color): Texture {
-        val key = radius to Color.rgba8888(color)
-        return circleCache.getOrPut(key) {
+    fun getCircleTexture(radius: Int): Texture {
+        val key = "circle_$radius"
+        return textureCache.getOrPut(key) {
             val pixmap = Pixmap(radius * 2, radius * 2, Pixmap.Format.RGBA8888)
             pixmap.setColor(0f, 0f, 0f, 0f)
             pixmap.fill()
-            pixmap.setColor(color)
+            pixmap.setColor(Color.WHITE)
             pixmap.fillCircle(radius, radius, radius)
             Texture(pixmap)
         }
     }
 
-    fun getRectangleTexture(width: Int, height: Int, color: Color): Texture {
-        val key = Triple(width, height, Color.rgba8888(color))
-        return rectCache.getOrPut(key) {
+    fun getRectangleTexture(width: Int, height: Int): Texture {
+        val key = "rect_${width}_$height"
+        return textureCache.getOrPut(key) {
             val pixmap = Pixmap(width, height, Pixmap.Format.RGBA8888)
-            pixmap.setColor(0f, 0f, 0f, 0f)
-            pixmap.fill()
+            //pixmap.setColor(1f, 1f, 1f, 1f)
+            //pixmap.fill()
 
-            val innerColor = color.cpy()
-            val outerColor = color.cpy().mul(0.5f)
-            pixmap.setColor(outerColor)
-            pixmap.fill()
-            pixmap.setColor(innerColor)
-            pixmap.fillRectangle(width / 4, 0, width / 2, height)
+            // NOTE FOR FUTURE SELF: This MUST be pure white for real-time tinting to work!
+            // Baking colors here causes "Black Box" artifacts due to color multiplication.
             pixmap.setColor(Color.WHITE)
-            pixmap.drawLine(width / 2, 0, width / 2, height)
+            pixmap.fill()
             Texture(pixmap)
         }
+    }
+
+    fun create8BitAttackButton(size: Int, down: Boolean): Texture {
+        val pixmap = Pixmap(size, size, Pixmap.Format.RGBA8888)
+        pixmap.setColor(0f, 0f, 0f, 0f)
+        pixmap.fill()
+
+        val gridSize = 16
+        val pixelSize = size / gridSize
+
+        // Use grayscale base for real-time saturation/tinting
+        val baseColor = if (down) Color(0.4f, 0.4f, 0.4f, 1f) else Color(0.7f, 0.7f, 0.7f, 1f)
+        val shadowColor = if (down) Color(0.2f, 0.2f, 0.2f, 1f) else Color(0.3f, 0.3f, 0.3f, 1f)
+        val highlightColor = if (down) Color(0.6f, 0.6f, 0.6f, 1f) else Color(0.9f, 0.9f, 0.9f, 1f)
+
+        pixmap.setColor(shadowColor)
+        pixmap.fillRectangle(0, 0, size, size)
+
+        pixmap.setColor(baseColor)
+        pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, size - pixelSize * 2)
+
+        pixmap.setColor(highlightColor)
+        pixmap.fillRectangle(pixelSize, pixelSize, size - pixelSize * 2, pixelSize)
+        pixmap.fillRectangle(pixelSize, pixelSize, pixelSize, size - pixelSize * 2)
+
+        pixmap.setColor(Color.WHITE)
+        val mid = gridSize / 2
+
+        for (i in -3..3) {
+            if (i == 0) continue
+            pixmap.fillRectangle((mid + i) * pixelSize, mid * pixelSize, pixelSize, pixelSize)
+            pixmap.fillRectangle(mid * pixelSize, (mid + i) * pixelSize, pixelSize, pixelSize)
+        }
+
+        val texture = Texture(pixmap)
+        pixmap.dispose()
+        return texture
     }
 
     fun createSciFiJoystickBase(size: Int): Texture {

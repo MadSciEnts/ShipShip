@@ -9,7 +9,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
 android {
-  namespace = "io.github.some_example_name"
+  namespace = "com.github.ships.android"
   compileSdk = 35
   sourceSets {
     main {
@@ -31,7 +31,7 @@ android {
 		}
   }
   defaultConfig {
-    applicationId 'io.github.some_example_name'
+    applicationId 'com.github.ships.android'
     minSdkVersion 21
     targetSdkVersion 35
     versionCode 1
@@ -50,11 +50,10 @@ android {
   }
 
   kotlin.compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
-  
+
 }
 
 repositories {
-  // needed for AAPT2, may be needed for other tools
   google()
 }
 
@@ -85,9 +84,6 @@ dependencies {
 
 }
 
-// Called every time gradle gets executed, takes the native dependencies of
-// the natives configuration, and extracts them to the proper libs/ folders
-// so they get packed with the APK.
 tasks.register('copyAndroidNatives') {
   doFirst {
     file("libs/armeabi-v7a/").mkdirs()
@@ -135,7 +131,7 @@ tasks.register('run', Exec) {
   }
 
   def adb = path + "/platform-tools/adb"
-  commandLine "$adb", 'shell', 'am', 'start', '-n', 'io.github.some_example_name/io.github.some_example_name.android.AndroidLauncher'
+  commandLine "$adb", 'shell', 'am', 'start', '-n', 'com.github.ships.android/com.github.ships.android.AndroidLauncher'
 }
 
 eclipse.project.name = appName + "-android"

@@ -25,7 +25,7 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     lateinit var body: Body
     protected var pixmap: Pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, 1)
     protected var texture: Texture = Texture(64, 64, Pixmap.Format.RGBA8888)
-    var trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
+    val trail = MotionTrail(if (this is PlayerShip) Color.CYAN.cpy() else Color(1f, 0.2f, 0.2f, 1f))
 
     var scale: Float = 1.0f
     var baseMaxSpeed: Float = 6f
@@ -41,8 +41,8 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
     protected val activeBeams = mutableListOf<BeamData>()
     protected var candleFlickerTimer = 0f
     protected var currentFlickerColor = Color.RED
-    private var refreshDamageVisuals = false
-    private val damagedPixels = BooleanArray(64 * 64)
+
+    protected val damageImpacts = mutableListOf<Vector2>()
 
     protected class BeamData(val start: Vector2, val end: Vector2, val color: Color, var life: Float, var maxLife: Float, val baseWidth: Float)
 
@@ -111,12 +111,6 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 1 -> Color.YELLOW
                 else -> Color.WHITE
             }
-            if (damagedPixels.any { it }) refreshDamageVisuals = true
-        }
-
-        if (refreshDamageVisuals) {
-            updateDamageTextureColors()
-            refreshDamageVisuals = false
         }
     }
 
@@ -138,29 +132,18 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         renderWeaponPods(batch, width, height, angleDeg)
     }
 
-    private fun updateDamageTextureColors() {
-        val flickerColorInt = Color.rgba8888(currentFlickerColor)
-        var changed = false
-        for (i in 0 until damagedPixels.size) {
-            if (damagedPixels[i]) {
-                val dx = i % 64
-                val dy = i / 64
-                pixmap.drawPixel(dx, dy, flickerColorInt)
-                changed = true
-            }
-        }
-        if (changed) texture.draw(pixmap, 0, 0)
-    }
+    fun renderDamageArtifacts(shapeRenderer: ShapeRenderer) {
+        if (damageImpacts.isEmpty()) return
 
-    private fun isDamagePixel(rgba: Int): Boolean {
-        val r = (rgba ushr 24) and 0xff
-        val g = (rgba ushr 16) and 0xff
-        val b = (rgba ushr 8) and 0xff
-        val a = rgba and 0xff
-        if (a == 0) return false
-        return (r > 200 && g < 100 && b < 100) ||
-               (r > 200 && g > 200 && b < 100) ||
-               (r > 200 && g > 200 && b > 200)
+        val flickerColor = currentFlickerColor.cpy()
+        shapeRenderer.setColor(flickerColor)
+
+        for (impact in damageImpacts) {
+            val worldPos = body.position.cpy().add(impact.cpy().rotateRad(body.angle))
+            val size = 0.15f * scale
+            shapeRenderer.rect(worldPos.x - size/2, worldPos.y - size/2,
+                size/2, size/2, size, size, 1f, 1f, body.angle * MathUtils.radiansToDegrees)
+        }
     }
 
     fun renderBeams(shapeRenderer: ShapeRenderer) {
@@ -180,7 +163,6 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         val hasNosePort = maxPorts % 2 != 0
         val localForward: Float
         val localSide: Float
-
         if (hasNosePort && index == 0) {
             localForward = shipH * 0.45f
             localSide = 0f
@@ -189,18 +171,13 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
             val podsPerSide = (if (hasNosePort) maxPorts - 1 else maxPorts) / 2
             val sideSign = if (actualIndex % 2 == 0) 1f else -1f
             val sideIndex = actualIndex / 2
-
             val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
-
             val t = if (podsPerSide > 1) sideIndex.toFloat() / (podsPerSide - 1).toFloat() else 0.5f
             val yFactor = (t - 0.5f) * 0.8f
-
             localForward = shipH * yFactor
-
             val triangleWidthFactor = (0.5f - yFactor)
             localSide = (shipW / 2f) * sideSign * MathUtils.lerp(triangleWidthFactor, 1f, progress)
         }
-
         val worldOffset = Vector2(localForward, -localSide).rotateRad(bodyAngleRad)
         return body.position.cpy().add(worldOffset)
     }
@@ -296,7 +273,6 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         var minDist = Float.MAX_VALUE
         val forward = Vector2(MathUtils.cos(bodyAngleRad), MathUtils.sin(bodyAngleRad))
         val right = forward.cpy().rotate90(-1)
-
         for (target in targets) {
             if (target == this || target.health <= 0) continue
             val toTarget = target.body.position.cpy().sub(origin)
@@ -310,7 +286,6 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
                 closest = target
             }
         }
-
         return closest?.let { target ->
             val toTarget = target.body.position.cpy().sub(origin)
             val dist = toTarget.len()
@@ -334,36 +309,8 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         } else {
             health -= amount
             if (impactPoint != null) {
-                damageTexture(impactPoint)
-            }
-        }
-    }
-
-    private fun damageTexture(impactWorldPos: Vector2) {
-        val relativePos = impactWorldPos.cpy().sub(body.position)
-        relativePos.rotateDeg(90f - body.angle * MathUtils.radiansToDegrees)
-        val progress = MathUtils.clamp((level - 1) / 49f, 0f, 1f)
-        val lengthScale = 1f + progress * 2f
-        val shipW = 1.5f * scale
-        val shipH = 1.5f * scale * lengthScale
-        val px = ((relativePos.x / shipW + 0.5f) * pixmap.width).toInt()
-        val py = ((0.5f - relativePos.y / shipH) * pixmap.height).toInt()
-        pixmap.blending = Pixmap.Blending.None
-        val damageSize = MathUtils.random(4, 8)
-        val startX = px - damageSize / 2
-        val startY = py - damageSize / 2
-        for (dx in 0 until damageSize) {
-            for (dy in 0 until damageSize) {
-                val fx = startX + dx
-                val fy = startY + dy
-                if (fx >= 0 && fx < pixmap.width && fy >= 0 && fy < pixmap.height) {
-                    val colorInt = pixmap.getPixel(fx, fy)
-                    val alpha = (colorInt and 0x000000ff)
-                    if (alpha > 0) {
-                        pixmap.drawPixel(fx, fy, Color.rgba8888(currentFlickerColor.r, currentFlickerColor.g, currentFlickerColor.b, 1f))
-                        damagedPixels[fy * 64 + fx] = true
-                    }
-                }
+                val localImpact = impactPoint.cpy().sub(body.position).rotateRad(-body.angle)
+                damageImpacts.add(localImpact)
             }
         }
     }
@@ -374,10 +321,10 @@ abstract class Ship(val world: World, val x: Float, val y: Float, val shipColor:
         pixmap.dispose()
     }
     fun evolveShip() {
-        pixmap.setColor(0f, 0f, 0f, 0f)
-        pixmap.fill()
-        ProceduralTextureGenerator.drawShipToPixmap(pixmap, shipColor, level)
-        texture.draw(pixmap, 0, 0)
-        damagedPixels.fill(false)
+        pixmap.dispose()
+        texture.dispose()
+        pixmap = ProceduralTextureGenerator.createShipPixmap(64, 64, shipColor, level)
+        texture = Texture(pixmap)
+        damageImpacts.clear()
     }
 }

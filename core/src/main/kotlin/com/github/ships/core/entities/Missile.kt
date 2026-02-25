@@ -17,7 +17,7 @@ class Missile(
     val color: Color
 ) {
     var body: Body
-    private val texture: Texture = ProceduralTextureGenerator.getCircleTexture(6, color)
+    private val texture: Texture = ProceduralTextureGenerator.getCircleTexture(6)
     var active = true
     var lifeTime = 5f
     private val steeringForce = 5f
@@ -58,10 +58,11 @@ class Missile(
     }
 
     fun render(batch: SpriteBatch) {
+        batch.setColor(color)
         batch.draw(texture, body.position.x - 0.1f, body.position.y - 0.05f, 0.1f, 0.05f, 0.2f, 0.1f, 1f, 1f, body.angle * 57.295776f, 0, 0, texture.width, texture.height, false, false)
+        batch.setColor(Color.WHITE)
     }
 
     fun dispose() {
-        // Texture is managed
     }
 }

@@ -11,7 +11,7 @@ import com.github.ships.core.utils.ProceduralTextureGenerator
 
 class ExperienceCrystal(val world: World, x: Float, y: Float, val xpAmount: Float) {
     var body: Body
-    private val texture: Texture = ProceduralTextureGenerator.getCircleTexture(8, Color.CYAN)
+    private val texture: Texture = ProceduralTextureGenerator.getCircleTexture(8)
     var active = true
     private val baseRadius = 0.15f
 
@@ -55,11 +55,11 @@ class ExperienceCrystal(val world: World, x: Float, y: Float, val xpAmount: Floa
         val minWorldSize = 5.0f * unitsPerPixel
         val renderRadius = Math.max(baseRadius * zoom, minWorldSize / 2f)
 
-        batch.setColor(Color.WHITE)
+        batch.setColor(Color.CYAN) // Tint white texture to Cyan
         batch.draw(texture, body.position.x - renderRadius, body.position.y - renderRadius, renderRadius * 2, renderRadius * 2)
+        batch.setColor(Color.WHITE)
     }
 
     fun dispose() {
-        // Texture is shared/managed by generator
     }
 }
